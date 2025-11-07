@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 9811e544f4eb2430c8cc08ac4c5b25b3
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example2_CurveEditor/CurveEditor.cs
+  uploadId: 754628

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 90565319c93ed2f49b157dfd0532a74c
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/CommandBuilder2DExtensions.cs
+  uploadId: 754628

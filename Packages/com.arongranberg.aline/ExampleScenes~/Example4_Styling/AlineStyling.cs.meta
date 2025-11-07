@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 21d9bc83d3ff57277b0c8f8a1bdba02b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example4_Styling/AlineStyling.cs
+  uploadId: 754628

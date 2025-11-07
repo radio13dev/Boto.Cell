@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 74e11d375a4c443bebed3fd6b0bb0e11
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  preprocessorOverride: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Resources/aline_common_surface.cginc
+  uploadId: 754628

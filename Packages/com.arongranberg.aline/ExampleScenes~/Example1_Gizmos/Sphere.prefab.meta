@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 65c56cea83058d8b0aa9b0c202895c0f
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example1_Gizmos/Sphere.prefab
+  uploadId: 754628

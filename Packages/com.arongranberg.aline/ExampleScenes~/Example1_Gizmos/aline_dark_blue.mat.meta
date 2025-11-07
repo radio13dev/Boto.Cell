@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 08a6f092a8c8ebed7a8fbab012924ca1
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example1_Gizmos/aline_dark_blue.mat
+  uploadId: 754628

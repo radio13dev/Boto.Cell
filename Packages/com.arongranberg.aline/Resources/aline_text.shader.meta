@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 537f9312ab33ad434a5484e558bbbca3
+timeCreated: 1442945130
+licenseType: Store
+ShaderImporter:
+  defaultTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Resources/aline_text.shader
+  uploadId: 754628

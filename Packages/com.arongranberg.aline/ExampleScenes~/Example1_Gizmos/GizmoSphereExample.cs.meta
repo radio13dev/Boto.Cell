@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 84c113b72590d07009ea8faf533e132d
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example1_Gizmos/GizmoSphereExample.cs
+  uploadId: 754628

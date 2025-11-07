@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 19670a3e053b3d08abfa9302a32e93d9
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/ExampleScenes~/Example1_Gizmos/aline_transparent_sphere.mat
+  uploadId: 754628

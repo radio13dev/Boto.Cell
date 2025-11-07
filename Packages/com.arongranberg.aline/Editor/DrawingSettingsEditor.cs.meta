@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 82a30ddb6b38ed2f68348d601bc43a2b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Editor/DrawingSettingsEditor.cs
+  uploadId: 754628

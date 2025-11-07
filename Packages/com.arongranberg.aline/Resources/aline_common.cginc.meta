@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 1b135520270114849b121a628fe61ba9
+timeCreated: 1472987846
+licenseType: Store
+ShaderImporter:
+  defaultTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Resources/aline_common.cginc
+  uploadId: 754628

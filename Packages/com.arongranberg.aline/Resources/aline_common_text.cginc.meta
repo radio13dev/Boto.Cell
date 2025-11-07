@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a4bc56dd8cf7ec1bebb90e3a60d73473
+ShaderIncludeImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Resources/aline_common_text.cginc
+  uploadId: 754628

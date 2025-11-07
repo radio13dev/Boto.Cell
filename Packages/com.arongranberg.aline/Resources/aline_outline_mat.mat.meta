@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 91035448860ba4e708919485c73f7edd
+timeCreated: 1442945121
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 162772
+  packageName: ALINE
+  packageVersion: 1.7.8
+  assetPath: Packages/com.arongranberg.aline/Resources/aline_outline_mat.mat
+  uploadId: 754628
