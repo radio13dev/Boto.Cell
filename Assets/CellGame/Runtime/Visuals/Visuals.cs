@@ -7,6 +7,7 @@ using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using static Unity.Mathematics.math;
+using float2 = Unity.Mathematics.float2;
 using float3 = Unity.Mathematics.float3;
 using float4x4 = Unity.Mathematics.float4x4;
 using quaternion = Unity.Mathematics.quaternion;
@@ -21,21 +22,27 @@ public partial struct Visuals : ISystem
             dt = SystemAPI.Time.DeltaTime,
             CommandBuilder = builder
         }.Schedule(state.Dependency);
-        var virusDrawJob_Player = new VirusDrawJob_Player()
+        var dnaDrawJob = new DnaDrawJob()
         {
             dt = SystemAPI.Time.DeltaTime,
             CommandBuilder = builder
-        }.Schedule(virusDrawJob);
+        }.Schedule(state.Dependency);
         var cellDrawJob = new CellDrawJob()
         {
             dt = SystemAPI.Time.DeltaTime,
             CommandBuilder = builder
         }.Schedule(state.Dependency);
-        state.Dependency = JobHandle.CombineDependencies(virusDrawJob_Player, cellDrawJob);
+        var RtsCommandDrawJob = new RtsCommandDrawJob()
+        {
+            dt = SystemAPI.Time.DeltaTime,
+            TransformLookup = SystemAPI.GetComponentLookup<Transform>(true),
+            CommandBuilder = builder
+        }.Schedule(state.Dependency);
+        state.Dependency = JobHandle.CombineDependencies(virusDrawJob, dnaDrawJob, cellDrawJob);
+        state.Dependency = JobHandle.CombineDependencies(state.Dependency, RtsCommandDrawJob);
         builder.DisposeAfter(state.Dependency);
     }
     
-    [WithNone(typeof(Player))]
     partial struct VirusDrawJob : IJobEntity
     {
         [ReadOnly] public float dt;
@@ -43,48 +50,18 @@ public partial struct Visuals : ISystem
         public void Execute(in Virus virus, ref Virus.AnimData animData, in Transform position, in Collider collider)
         {
             CommandBuilder.Arrowhead(float3(position.Position, 0), float3(position.Direction, 0), float3(0,0,1), collider.Radius);
-            
-            var p = float3(position.Position, 0);
-            var dir = float3(position.Direction, 0);
-            var rotZero = quaternion.LookRotation(dir, float3(0,0,1));
-            
-            // Display DNA in base 4
-            //int len = 1 + (64 - math.lzcnt(virus.DNA.Value))/2;
-            //for (int i = 0; i < len; i++)
-            //{
-            //    const float DNA_SPACING = 1f;
-            //    const float DNA_ANGLE_SHIFT = 0.5f;
-            //    p -= dir*DNA_SPACING;
-            //    var rot = quaternion.AxisAngle(dir, i*DNA_ANGLE_SHIFT);
-            //    
-            //    var t = LocalTransform.FromPositionRotationScale(p, math.mul(rot, rotZero), collider.Radius/2);
-            //    
-            //    CommandBuilder.WireRectangle(t.Position, t.Rotation, t.Scale);
-            //    
-            //    float innerSpacing = t.Scale/4;
-            //    float innerScale = t.Scale/5;
-            //    const byte b = 0b11;
-            //    byte bits = (byte)((virus.DNA.Value>>(i*2))&b);
-            //    if (bits > 0) CommandBuilder.WireRectangle(t.Position + t.Forward()*innerSpacing + t.Right()*innerSpacing, t.Rotation, innerScale);
-            //    if (bits > 1) CommandBuilder.WireRectangle(t.Position + t.Forward()*innerSpacing - t.Right()*innerSpacing, t.Rotation, innerScale);
-            //    if (bits > 2) CommandBuilder.WireRectangle(t.Position - t.Forward()*innerSpacing + t.Right()*innerSpacing, t.Rotation, innerScale);
-            //}
-        }
-    }
-        
-    [WithAll(typeof(Player))]
-    partial struct VirusDrawJob_Player : IJobEntity
-    {
-        [ReadOnly] public float dt;
-        public CommandBuilder CommandBuilder;
-        public void Execute(in Virus virus, ref Virus.AnimData animData, in Transform position, in Collider collider, in DynamicBuffer<DNA.Group> groups, in DynamicBuffer<DNA.Particle> particles, in DynamicBuffer<DNA.Merger> mergers)
-        {
-            new VirusDrawJob(){CommandBuilder = CommandBuilder}.Execute(virus, ref animData, position, collider);
             //CommandBuilder.Label2D(float3(position.Position - position.Direction, 0), virus.DNA.Value.ToString(), 14*animData.DNATextScale, LabelAlignment.Center);
             animData.TimeSinceDNAChange -= math.clamp(dt*Virus.AnimData.DNAChangeFadeSpeedLinear, -abs(animData.TimeSinceDNAChange), abs(animData.TimeSinceDNAChange));
             animData.TimeSinceDNAChange -= dt*animData.TimeSinceDNAChange*Virus.AnimData.DNAChangeFadeSpeedRelative;
-            
-            
+        }
+    }
+        
+    partial struct DnaDrawJob : IJobEntity
+    {
+        [ReadOnly] public float dt;
+        public CommandBuilder CommandBuilder;
+        public void Execute(in Transform position, in Collider collider, in DynamicBuffer<DNA.Group> groups, in DynamicBuffer<DNA.Particle> particles, in DynamicBuffer<DNA.Merger> mergers)
+        {
             // Display DNA in base 4
             for (int i = 0; i < groups.Length; i++)
             {
@@ -126,6 +103,23 @@ public partial struct Visuals : ISystem
         public void Execute(in Cell virus, in Transform position, in Collider collider)
         {
             CommandBuilder.Circle(float3(position.Position, 0), float3(0,0,1), collider.Radius);
+        }
+    }
+    partial struct RtsCommandDrawJob : IJobEntity
+    {
+        [ReadOnly] public float dt;
+        [ReadOnly] public ComponentLookup<Transform> TransformLookup;
+        public CommandBuilder CommandBuilder;
+        
+        public void Execute(in Transform position, in DynamicBuffer<RtsCommandBuffer> commands, in RtsCommandBuffer.Memory memory)
+        {
+            float2 last = position.Position;
+            for (int i = 0; i < commands.Length; i++)
+            {
+                float2 newPos = commands[i].GetPosition(ref TransformLookup);
+                CommandBuilder.DashedLine(float3(last,0), float3(newPos, 0), 0.5f, 0.5f);
+                last = newPos;
+            }
         }
     }
 }
@@ -209,13 +203,27 @@ public partial struct PlayerControlSystem : ISystem
     
         if (!m_RtsModeEnabled)
         {
-            new Job()
+            //new Job()
+            //{
+            //    mousePos = mouseWorldPos,
+            //    mousePress = Mouse.current.press.wasPressedThisFrame || Mouse.current.rightButton.isPressed,
+            //    mousePressedOnEntity = bestEntity
+            //}.Schedule();
+            var playerE = m_PlayerQuery.GetSingletonEntity();
+            cameraTargetPos = SystemAPI.GetComponent<Transform>(playerE).Position;
+            m_Selected.Clear();
+            m_Selected.Add(playerE);
+            if (Mouse.current.rightButton.isPressed)
             {
-                mousePos = mouseWorldPos,
-                mousePress = Mouse.current.press.wasPressedThisFrame || Mouse.current.rightButton.isPressed,
-                mousePressedOnEntity = bestEntity
-            }.Schedule();
-            cameraTargetPos = SystemAPI.GetComponent<Transform>(m_PlayerQuery.GetSingletonEntity()).Position;
+                // Right click sends commands
+                new RtsSendJob()
+                {
+                    Affected = m_Selected,
+                    Append = Keyboard.current.shiftKey.isPressed,
+                    Command = bestEntity == Entity.Null ? RtsCommandBuffer.Move(mouseWorldPos) : RtsCommandBuffer.Interact(bestEntity),
+                    
+                }.Schedule();
+            }
         }
         else
         {
@@ -243,6 +251,18 @@ public partial struct PlayerControlSystem : ISystem
             {
                 cameraTargetPos -= mouseWorldDelta;
             }
+            
+            if (Mouse.current.rightButton.isPressed && m_Selected.Count > 0)
+            {
+                // Right click sends commands
+                new RtsSendJob()
+                {
+                    Affected = m_Selected,
+                    Append = Keyboard.current.shiftKey.isPressed,
+                    Command = bestEntity == Entity.Null ? RtsCommandBuffer.Move(mouseWorldPos) : RtsCommandBuffer.Interact(bestEntity),
+                    
+                }.Schedule();
+            }
         }
         
         
@@ -267,14 +287,35 @@ public partial struct PlayerControlSystem : ISystem
         [ReadOnly] public bool mousePress;
         [ReadOnly] public Entity mousePressedOnEntity;
         
-        public void Execute(in Transform position, ref Input input)
+        public void Execute(in Transform position, ref Input input, DynamicBuffer<RtsCommandBuffer> buffer)
         {
+            buffer.Clear();
             input.Vec0 = mousePos - position.Position;
             if (mousePress)
             {
                 input.Action = 1;
                 input.ActionRef = mousePressedOnEntity;
             }
+        }
+    }
+
+    partial struct RtsSendJob : IJobEntity
+    {
+        [ReadOnly] public NativeHashSet<Entity> Affected;
+        [ReadOnly] public RtsCommandBuffer Command;
+        [ReadOnly] public bool Append;
+        
+        public void Execute(in Entity entity, ref DynamicBuffer<RtsCommandBuffer> buffer, ref RtsCommandBuffer.Memory memory)
+        {
+            if (!Affected.Contains(entity)) return;
+            
+            if (!Append)
+            {
+                buffer.Clear();
+                memory.Clear();
+            }
+            
+            buffer.Add(Command);
         }
     }
 }

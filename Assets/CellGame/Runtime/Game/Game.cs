@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -22,15 +23,19 @@ public partial struct Game : ISystem
     {
         m_ArchetypeVirus = state.EntityManager.CreateArchetype(
             // Main
-            typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasParentTag), typeof(Parent), 
-            typeof(Input), typeof(RtsCommandBuffer),
+            typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider), 
+            typeof(HasParentTag), typeof(Parent), 
+            typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
             // Animation
             typeof(Virus.AnimData), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
         );
         m_ArchetypeCell = state.EntityManager.CreateArchetype(
             // Main
-            typeof(Cell), typeof(Cell.AnimData), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasChildrenTag),
-            typeof(ChildrenDirty), typeof(ParentTransform), typeof(Children), typeof(Input)
+            typeof(Cell), typeof(Transform), typeof(Velocity), typeof(Collider), 
+            typeof(HasChildrenTag), typeof(ChildrenDirty), typeof(ParentTransform), typeof(Children),
+            typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
+            // Animation
+            typeof(Cell.AnimData)
         );
 
         Random r = Random.CreateFromIndex(0);
@@ -116,6 +121,65 @@ public partial struct MovementSystem : ISystem
     }
 }
 
+[UpdateBefore(typeof(InputSystem))]
+public partial struct RtsInputProcessSystem : ISystem
+{
+    public void OnUpdate(ref SystemState state)
+    {
+        new Job()
+        {
+            TransformLookup = SystemAPI.GetComponentLookup<Transform>(true)
+        }.Schedule();
+    }
+    
+    partial struct Job : IJobEntity
+    {
+        [ReadOnly] public ComponentLookup<Transform> TransformLookup;
+    
+        public void Execute(ref DynamicBuffer<RtsCommandBuffer> commands, ref RtsCommandBuffer.Memory memory, in Transform transform, in Collider collider, ref Input input)
+        {
+            if (commands.Length == 0) return;
+
+            var command = commands[0];
+            switch (command.Type)
+            {
+                case RtsCommandBuffer.eType.Move:
+                {
+                    var d = math.distance(transform.Position, command.float2);
+                    if (d > collider.Radius)
+                    {
+                        memory.NearestDistance = d;
+                        
+                        input.Action = 1;
+                        input.Vec0 = command.float2 - transform.Position;
+                    }
+                    else
+                    {
+                        memory.Clear();
+                        commands.RemoveAt(0);
+                    }
+                    break;
+                }
+                case RtsCommandBuffer.eType.Interact:
+                {
+                    if (TransformLookup.TryGetComponent(command.Entity, out var target))
+                    {
+                        input.Action = 1;
+                        input.ActionRef = command.Entity;
+                        input.Vec0 = TransformLookup[command.Entity].Position - transform.Position;
+                    }
+                    else
+                    {
+                        memory.Clear();
+                        commands.RemoveAt(0);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
 public partial struct InputSystem : ISystem
 {
     public void OnUpdate(ref SystemState state)
@@ -137,16 +201,16 @@ public partial struct InputSystem : ISystem
             {
                 if (time < input.DisableUntilTime)
                 {
-                    input.DisableUntilTime -= 0.1f;
+                    //input.DisableUntilTime -= 0.1f;
                 }
                 else
                 {
                     velocity.Value += normalizesafe(input.Vec0);
-                    input.DisableUntilTime = time + 1f;
+                    input.DisableUntilTime = time + Input.Cooldown;
                 }
             }
 
-            input = default;
+            input.Clear();
         }
     }
 }
@@ -186,12 +250,12 @@ public partial struct Virus_InputSystem : ISystem
             {
                 if (time < input.DisableUntilTime)
                 {
-                    input.DisableUntilTime -= 0.1f;
+                    //input.DisableUntilTime -= 0.1f;
                 }
                 else
                 {
                     velocity.Value += normalizesafe(input.Vec0);
-                    input.DisableUntilTime = time + 1f;
+                    input.DisableUntilTime = time + Input.Cooldown;
                 }
             }
 
@@ -267,7 +331,7 @@ public partial struct Virus_InputSystem : ISystem
                 }
             }
 
-            input = default;
+            input.Clear();
 
 
             // ...
@@ -620,11 +684,71 @@ public struct Input : IComponentData
 
     public byte Action;
     public Entity ActionRef;
+    public const double Cooldown = 0.2f;
+
+    public void Clear()
+    {
+        Vec0 = default;
+        Action = default;
+        ActionRef = default;
+    }
 }
 
-public struct RtsCommandBuffer : IBufferElementData
+
+[StructLayout(LayoutKind.Explicit, Size = sizeof(byte)+sizeof(float)*3, Pack = 2)]
+public readonly struct RtsCommandBuffer : IBufferElementData
 {
+    public enum eType : byte
+    {
+        Move,
+        Interact
+    }
     
+    [FieldOffset(0)] 
+    public readonly eType Type;
+    [FieldOffset(1)] public readonly Entity Entity;
+    [FieldOffset(1)] public readonly float2 float2;
+    
+    
+    public static RtsCommandBuffer Interact(Entity entity) => new RtsCommandBuffer(entity);
+    RtsCommandBuffer(Entity entity) : this()
+    {
+        Type = eType.Interact;
+        Entity = entity;
+    }
+
+    public static RtsCommandBuffer Move(float2 position) => new RtsCommandBuffer(position);
+    RtsCommandBuffer(float2 position) : this()
+    {
+        Type = eType.Move;
+        float2 = position;
+    }
+    
+    public struct Memory : IComponentData
+    {
+        public float NearestDistance;
+
+        public void Clear()
+        {
+            NearestDistance = float.MaxValue;
+        }
+    }
+
+    public float2 GetPosition(ref ComponentLookup<Transform> transformLookup)
+    {
+        switch (Type)
+        {
+            case eType.Move: 
+                return float2;
+            case eType.Interact: 
+                if (transformLookup.TryGetComponent(Entity, out var target)) 
+                    return target.Position; 
+                else 
+                    break;
+        }
+        
+        return default;
+    }
 }
 
 public struct Virus : IComponentData
