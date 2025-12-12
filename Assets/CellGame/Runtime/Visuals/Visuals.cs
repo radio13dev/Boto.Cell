@@ -161,6 +161,7 @@ public partial struct PlayerControlSystem : ISystem
     {
         if (Keyboard.current.tabKey.wasPressedThisFrame)
         {
+            m_IsCameraDragging = false;
             if (m_RtsModeEnabled)
             {
                 m_RtsCameraTargetZoom = m_Zoom;

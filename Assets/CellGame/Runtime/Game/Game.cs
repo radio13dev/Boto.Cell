@@ -23,7 +23,8 @@ public partial struct Game : ISystem
     {
         m_ArchetypeVirus = state.EntityManager.CreateArchetype(
             // Main
-            typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider), 
+            typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider),
+            typeof(Transform.FaceMoveDirection),
             typeof(HasParentTag), typeof(Parent), 
             typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
             // Animation
@@ -70,7 +71,11 @@ public partial struct MovementSystem : ISystem
 {
     public void OnUpdate(ref SystemState state)
     {
-        state.Dependency = new Job()
+        state.Dependency = new FaceDirectionJob()
+        {
+            dt = SystemAPI.Time.DeltaTime
+        }.Schedule(state.Dependency);
+        state.Dependency = new DontFaceDirectionJob()
         {
             dt = SystemAPI.Time.DeltaTime
         }.Schedule(state.Dependency);
@@ -84,7 +89,8 @@ public partial struct MovementSystem : ISystem
     }
 
     [WithNone(typeof(HasParentTag))]
-    partial struct Job : IJobEntity
+    [WithAll(typeof(Transform.FaceMoveDirection))]
+    partial struct FaceDirectionJob : IJobEntity
     {
         [ReadOnly] public float dt;
 
@@ -92,6 +98,18 @@ public partial struct MovementSystem : ISystem
         {
             position.Position += velocity.Value * dt;
             position.Direction = math.normalizesafe(velocity.Value, position.Direction);
+            velocity.Value += -velocity.Value * dt;
+        }
+    }
+    [WithNone(typeof(HasParentTag))]
+    [WithNone(typeof(Transform.FaceMoveDirection))]
+    partial struct DontFaceDirectionJob : IJobEntity
+    {
+        [ReadOnly] public float dt;
+
+        public void Execute(ref Transform position, ref Velocity velocity)
+        {
+            position.Position += velocity.Value * dt;
             velocity.Value += -velocity.Value * dt;
         }
     }
@@ -278,7 +296,7 @@ public partial struct Virus_InputSystem : ISystem
                         // Push us out of the parent collider
                         Collider.MoveOutOf(transform.Position, collider, newParentT.Transform.Position, parentC, out float2 shift, out _);
                         transform.Position += shift;
-                        transform.Direction = math.normalizesafe(newParentT.Transform.Position - transform.Position);
+                        transform.Direction = math.normalizesafe(newParentT.Transform.Position - transform.Position, float2(1,0));
 
                         // Setup child-to-parent link
                         var newParentData = new Parent()
@@ -415,8 +433,6 @@ public partial struct CollisionSystem : ISystem
 
         public void Execute(Entity entity, ref Transform transform, ref Velocity velocity, in Collider collider, in DynamicBuffer<Children> children)
         {
-            transform.Direction = math.normalizesafe(velocity.Value);
-
             for (int i = 0; i < Colliders.Length; i++)
             {
                 if (Entities[i] == entity) goto Skip;
@@ -456,6 +472,8 @@ public struct Transform : IComponentData
     public float2 Position;
     public float2 Direction;
     public float2 Right => float2(-Direction.y, Direction.x);
+    
+    public struct FaceMoveDirection : IComponentData { }
 
     public static Transform FromPosition(float2 position) => FromPositionRotation(position, 0);
 
