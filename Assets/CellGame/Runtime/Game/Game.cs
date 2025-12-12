@@ -15,22 +15,29 @@ public partial struct Game : ISystem
     const int CellCount = 10;
     static readonly int2 MapSize = int2(50, 50);
 
+    EntityArchetype m_ArchetypeVirus;
+    EntityArchetype m_ArchetypeCell;
+
     public void OnCreate(ref SystemState state)
     {
+        m_ArchetypeVirus = state.EntityManager.CreateArchetype(
+            // Main
+            typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasParentTag), typeof(Parent), 
+            typeof(Input), typeof(RtsCommandBuffer),
+            // Animation
+            typeof(Virus.AnimData), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
+        );
+        m_ArchetypeCell = state.EntityManager.CreateArchetype(
+            // Main
+            typeof(Cell), typeof(Cell.AnimData), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasChildrenTag),
+            typeof(ChildrenDirty), typeof(ParentTransform), typeof(Children), typeof(Input)
+        );
+
         Random r = Random.CreateFromIndex(0);
         for (int i = 0; i < VirusCount; i++)
         {
-            Entity virusE;
-            if (i == 0)
-                virusE = state.EntityManager.CreateEntity(
-                    // Main
-                    typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasParentTag), typeof(Parent), typeof(Input), typeof(Player),
-                    // Animation
-                    typeof(Virus.AnimData), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
-                );
-            else
-                virusE = state.EntityManager.CreateEntity(typeof(Virus), typeof(Virus.AnimData), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasParentTag),
-                    typeof(Parent), typeof(Input));
+            Entity virusE = state.EntityManager.CreateEntity(m_ArchetypeVirus);
+            if (i == 0) state.EntityManager.AddComponent<Player>(virusE);
             state.EntityManager.SetComponentEnabled<HasParentTag>(virusE, false);
             state.EntityManager.SetComponentData(virusE, new Collider() { Radius = 1, Type = Collider.eType.Circle });
             state.EntityManager.SetComponentData(virusE, Transform.FromPositionRotation(r.NextFloat2(MapSize), r.NextFloat()));
@@ -38,8 +45,7 @@ public partial struct Game : ISystem
 
         for (int i = 0; i < CellCount; i++)
         {
-            var cellE = state.EntityManager.CreateEntity(typeof(Cell), typeof(Cell.AnimData), typeof(Transform), typeof(Velocity), typeof(Collider), typeof(HasChildrenTag),
-                typeof(ChildrenDirty), typeof(ParentTransform), typeof(Children), typeof(Input));
+            var cellE = state.EntityManager.CreateEntity(m_ArchetypeCell);
             state.EntityManager.SetComponentData(cellE, new Collider() { Radius = 10, Type = Collider.eType.Circle });
             state.EntityManager.SetComponentData(cellE, Transform.FromPosition(r.NextFloat2(MapSize)));
 
@@ -201,9 +207,9 @@ public partial struct Virus_InputSystem : ISystem
                         // Animation stuff:
                         virusAnimData.TimeSinceDNAChange++;
                         // Update groups
-                        int len = math.max((1 + 64 - math.lzcnt(virus.DNA.Value))/2, 1);
+                        int len = math.max((1 + 64 - math.lzcnt(virus.DNA.Value)) / 2, 1);
                         while (groups.Length < len)
-                            groups.Add(new DNA.Group(){ Transform = groups.Length > 0 ? groups[^1].Transform : transform });
+                            groups.Add(new DNA.Group() { Transform = groups.Length > 0 ? groups[^1].Transform : transform });
                         while (particles.Length < 256)
                             particles.Add(new());
                         // Add particle anim stuff
@@ -268,7 +274,7 @@ public partial struct Virus_InputSystem : ISystem
 
             // Update group positions
             var lastT = transform;
-            var lastR = collider.Radius/2;
+            var lastR = collider.Radius / 2;
             for (int i = 0; i < groups.Length; i++)
             {
                 // First one must be at least x units from player
@@ -414,7 +420,7 @@ public struct Transform : IComponentData
 {
     public float2 Position;
     public float2 Direction;
-    public float2 Right => float2(-Direction.y, Direction.x); 
+    public float2 Right => float2(-Direction.y, Direction.x);
 
     public static Transform FromPosition(float2 position) => FromPositionRotation(position, 0);
 
@@ -616,6 +622,11 @@ public struct Input : IComponentData
     public Entity ActionRef;
 }
 
+public struct RtsCommandBuffer : IBufferElementData
+{
+    
+}
+
 public struct Virus : IComponentData
 {
     public DNA DNA;
@@ -632,7 +643,7 @@ public struct Virus : IComponentData
 public struct DNA
 {
     public ulong Value;
-    
+
     public struct Group : IBufferElementData
     {
         public Transform Transform;
@@ -651,7 +662,7 @@ public struct DNA
         public float2 ParticleD;
         public readonly ulong ValueToApproach;
         public readonly int DepthToMergeFrom;
-        
+
         public float T;
         public bool IsComplete => T >= 1;
 
@@ -659,46 +670,48 @@ public struct DNA
         {
             ValueToApproach = valueToApproach;
             DepthToMergeFrom = depthToMergeFrom;
-            
-            float innerSpacing = scale/8;
-            ParticleA = zero.Position + zero.Direction*innerSpacing + zero.Right*innerSpacing;
-            ParticleB = zero.Position + zero.Direction*innerSpacing - zero.Right*innerSpacing;
-            ParticleC = zero.Position - zero.Direction*innerSpacing + zero.Right*innerSpacing;
-            ParticleD = zero.Position - zero.Direction*innerSpacing - zero.Right*innerSpacing;
-            
+
+            float innerSpacing = scale / 8;
+            ParticleA = zero.Position + zero.Direction * innerSpacing + zero.Right * innerSpacing;
+            ParticleB = zero.Position + zero.Direction * innerSpacing - zero.Right * innerSpacing;
+            ParticleC = zero.Position - zero.Direction * innerSpacing + zero.Right * innerSpacing;
+            ParticleD = zero.Position - zero.Direction * innerSpacing - zero.Right * innerSpacing;
+
             T = 0;
         }
 
         public void Update(float dt, Transform zero, float scale)
         {
-            T += dt*5;
-            
-            float innerSpacing = scale/8;
+            T += dt * 5;
+
+            float innerSpacing = scale / 8;
             var bits = (byte)(((ValueToApproach - 1) >> (2 + 2 * DepthToMergeFrom)) & 3);
-            if (bits == 0) zero.Position += zero.Direction*innerSpacing + zero.Right*innerSpacing;
-            if (bits == 1) zero.Position += zero.Direction*innerSpacing - zero.Right*innerSpacing;
-            if (bits == 2) zero.Position += -zero.Direction*innerSpacing + zero.Right*innerSpacing;
-            if (bits == 3) zero.Position += -zero.Direction*innerSpacing - zero.Right*innerSpacing;
-            
+            if (bits == 0) zero.Position += zero.Direction * innerSpacing + zero.Right * innerSpacing;
+            if (bits == 1) zero.Position += zero.Direction * innerSpacing - zero.Right * innerSpacing;
+            if (bits == 2) zero.Position += -zero.Direction * innerSpacing + zero.Right * innerSpacing;
+            if (bits == 3) zero.Position += -zero.Direction * innerSpacing - zero.Right * innerSpacing;
+
             ParticleA = math.lerp(ParticleA, zero.Position, T);
             ParticleB = math.lerp(ParticleB, zero.Position, T);
             ParticleC = math.lerp(ParticleC, zero.Position, T);
             ParticleD = math.lerp(ParticleD, zero.Position, T);
         }
-        
+
         public static Transform lerp(Transform a, Transform b, float t)
         {
-            var aAng = math.atan2(a.Direction.y,a.Direction.x);
-            var bAng = math.atan2(b.Direction.y,b.Direction.x);
-            return Transform.FromPositionRotation(math.lerp(a.Position,b.Position,t), LerpAngle(aAng,bAng,t));
+            var aAng = math.atan2(a.Direction.y, a.Direction.x);
+            var bAng = math.atan2(b.Direction.y, b.Direction.x);
+            return Transform.FromPositionRotation(math.lerp(a.Position, b.Position, t), LerpAngle(aAng, bAng, t));
         }
+
         public static float LerpAngle(float a, float b, float t)
         {
             float num = Repeat(b - a, math.PI2);
-            if ((double) num > 180.0)
+            if ((double)num > 180.0)
                 num -= 360f;
-            return a + num * math.clamp(t,0,1);
+            return a + num * math.clamp(t, 0, 1);
         }
+
         public static float Repeat(float t, float length)
         {
             return math.clamp(t - math.floor(t / length) * length, 0.0f, length);

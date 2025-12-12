@@ -7,6 +7,7 @@ using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using static Unity.Mathematics.math;
+using float3 = Unity.Mathematics.float3;
 using float4x4 = Unity.Mathematics.float4x4;
 using quaternion = Unity.Mathematics.quaternion;
 
@@ -132,21 +133,45 @@ public partial struct Visuals : ISystem
 public partial struct PlayerControlSystem : ISystem
 {
     EntityQuery m_PlayerQuery;
+    NativeHashSet<Entity> m_Selected;
+    
+    bool m_IsDragging;
+    float2 m_DragStartPos;
+    float m_Zoom;
+    const float ZoomRate = 100f;
+    float CameraTrackRate => m_RtsModeEnabled ? 20 : 2;
+    
+    bool m_RtsModeEnabled;
+    bool m_IsCameraDragging;
+    float2 m_LastCameraTarget;
+    
     public void OnCreate(ref SystemState state)
     {
         m_PlayerQuery = SystemAPI.QueryBuilder().WithAll<Input, Player, Transform>().Build();
+        m_Selected = new NativeHashSet<Entity>(1024, Allocator.Persistent);
+        m_Zoom = 10;
     }
 
     public void OnDestroy(ref SystemState state)
     {
+        m_Selected.Dispose();
     }
 
     public void OnUpdate(ref SystemState state)
     {
-        var zeroPlane = new Plane(new Vector3(0,0,1), 0);
-        var mouseWorldRay = Camera.main.ScreenPointToRay(Mouse.current.position.ReadValue());
-        zeroPlane.Raycast(mouseWorldRay, out float enter);
-        var mouseWorldPos = ((float3)mouseWorldRay.GetPoint(enter)).xy;
+        if (Keyboard.current.tabKey.wasPressedThisFrame) m_RtsModeEnabled = !m_RtsModeEnabled;
+        m_Zoom = math.clamp(m_Zoom - Mouse.current.scroll.y.value*ZoomRate*SystemAPI.Time.DeltaTime*math.sqrt(m_Zoom), 10, 3000);
+    
+        var draw = Draw.ingame;
+        
+        var mouseWorldPos = ConvertScreenPointToWorldPos(Mouse.current.position.ReadValue());
+        var mouseWorldDelta = mouseWorldPos - ConvertScreenPointToWorldPos(Mouse.current.position.ReadValue() - Mouse.current.delta.ReadValue());
+        
+        // Setup selection box
+        var selectionBoxCenter = (m_DragStartPos + mouseWorldPos)/2;
+        var selectionBoxSize = math.abs(mouseWorldPos - m_DragStartPos);
+        var selectionBox = new Rect(selectionBoxCenter-selectionBoxSize/2, selectionBoxSize);
+        if (m_IsDragging) m_Selected.Clear();
         
         float bestDist = float.MaxValue;
         Entity bestEntity = Entity.Null;
@@ -163,26 +188,78 @@ public partial struct PlayerControlSystem : ISystem
                 bestTransform = transform.ValueRO;
                 bestCollider = collider.ValueRO;
             }
+            
+            if (m_IsDragging && selectionBox.Contains(transform.ValueRO.Position))
+            {
+                m_Selected.Add(entity);
+            }
+            
+            if (m_RtsModeEnabled && m_Selected.Contains(entity))
+            {
+                draw.Circle(float3(transform.ValueRO.Position,0), float3(0,0,1), collider.ValueRO.Radius*1.1f);
+            }
         }
         
         if (bestEntity != Entity.Null)
         {
-            var draw = Draw.ingame;
             draw.Circle(float3(bestTransform.Position,0), float3(0,0,1), bestCollider.Radius*1.2f);
         }
-    
-        new Job()
-        {
-            mousePos = mouseWorldPos,
-            mousePress = Mouse.current.press.wasPressedThisFrame || Mouse.current.rightButton.isPressed,
-            mousePressedOnEntity = bestEntity
-        }.Schedule();
         
-        var p = SystemAPI.GetComponent<Transform>(m_PlayerQuery.GetSingletonEntity()).Position;
-        //Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(p, 0), Time.deltaTime);
-        Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(p, -10), Time.deltaTime);
-    }
+        float2 cameraTargetPos;
     
+        if (!m_RtsModeEnabled)
+        {
+            new Job()
+            {
+                mousePos = mouseWorldPos,
+                mousePress = Mouse.current.press.wasPressedThisFrame || Mouse.current.rightButton.isPressed,
+                mousePressedOnEntity = bestEntity
+            }.Schedule();
+            cameraTargetPos = SystemAPI.GetComponent<Transform>(m_PlayerQuery.GetSingletonEntity()).Position;
+        }
+        else
+        {
+            // Handle click and drag stuff
+            if (!m_IsDragging)
+            {
+                if (Mouse.current.press.wasPressedThisFrame)
+                {
+                    m_IsDragging = true;
+                    m_DragStartPos = mouseWorldPos;
+                }
+            }
+            else
+            {
+                // Draw bounding box
+                draw.WireRectangle(float3(selectionBox.center,0), quaternion.Euler(math.PIHALF,0,0), selectionBox.size);
+        
+                if (!Mouse.current.press.isPressed)
+                    m_IsDragging = false;
+            }
+            cameraTargetPos = m_LastCameraTarget;
+            
+            // Use this middle-click-drag to move the camera around
+            if (Mouse.current.middleButton.isPressed)
+            {
+                cameraTargetPos -= mouseWorldDelta;
+            }
+        }
+        
+        
+        //Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(p, 0), Time.deltaTime);
+        m_LastCameraTarget = cameraTargetPos;
+        Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(m_LastCameraTarget, -m_Zoom), Time.deltaTime*CameraTrackRate);
+        Camera.main.farClipPlane = math.max(Camera.main.nearClipPlane+0.01f, -Camera.main.transform.position.z*1.5f);
+    }
+
+    private static float2 ConvertScreenPointToWorldPos(Vector2 val)
+    {
+        var zeroPlane = new Plane(new Vector3(0,0,1), 0);
+        var mouseWorldRay = Camera.main.ScreenPointToRay(val);
+        zeroPlane.Raycast(mouseWorldRay, out float enter);
+        return ((float3)mouseWorldRay.GetPoint(enter)).xy;
+    }
+
     [WithAll(typeof(Player))]
     partial struct Job : IJobEntity
     {
