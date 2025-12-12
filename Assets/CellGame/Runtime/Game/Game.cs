@@ -141,40 +141,11 @@ public partial struct RtsInputProcessSystem : ISystem
             if (commands.Length == 0) return;
 
             var command = commands[0];
-            switch (command.Type)
+            command.Execute(ref memory, ref TransformLookup, in transform, in collider, ref input, out bool finished);
+            if (finished)
             {
-                case RtsCommandBuffer.eType.Move:
-                {
-                    var d = math.distance(transform.Position, command.float2);
-                    if (d > collider.Radius)
-                    {
-                        memory.NearestDistance = d;
-                        
-                        input.Action = 1;
-                        input.Vec0 = command.float2 - transform.Position;
-                    }
-                    else
-                    {
-                        memory.Clear();
-                        commands.RemoveAt(0);
-                    }
-                    break;
-                }
-                case RtsCommandBuffer.eType.Interact:
-                {
-                    if (TransformLookup.TryGetComponent(command.Entity, out var target))
-                    {
-                        input.Action = 1;
-                        input.ActionRef = command.Entity;
-                        input.Vec0 = TransformLookup[command.Entity].Position - transform.Position;
-                    }
-                    else
-                    {
-                        memory.Clear();
-                        commands.RemoveAt(0);
-                    }
-                    break;
-                }
+                memory.Clear();
+                commands.RemoveAt(0);
             }
         }
     }
@@ -698,6 +669,7 @@ public struct Input : IComponentData
 [StructLayout(LayoutKind.Explicit, Size = sizeof(byte)+sizeof(float)*3, Pack = 2)]
 public readonly struct RtsCommandBuffer : IBufferElementData
 {
+    public const int MaxBufferSize = 200;
     public enum eType : byte
     {
         Move,
@@ -748,6 +720,47 @@ public readonly struct RtsCommandBuffer : IBufferElementData
         }
         
         return default;
+    }
+
+    public void Execute(ref Memory memory, ref ComponentLookup<Transform> TransformLookup, in Transform transform, in Collider collider, ref Input input, out bool finished)
+    {
+        finished = false;
+        switch (Type)
+        {
+            case RtsCommandBuffer.eType.Move:
+            {
+                var d = math.distance(transform.Position, float2);
+                if (d > collider.Radius)
+                {
+                    memory.NearestDistance = d;
+                        
+                    input.Action = 1;
+                    input.Vec0 = float2 - transform.Position;
+                }
+                else
+                {
+                    finished = true;
+                }
+                break;
+            }
+            case RtsCommandBuffer.eType.Interact:
+            {
+                if (TransformLookup.TryGetComponent(Entity, out var target))
+                {
+                    input.Action = 1;
+                    input.ActionRef = Entity;
+                    input.Vec0 = TransformLookup[Entity].Position - transform.Position;
+                }
+                else
+                {
+                    finished = true;
+                }
+                break;
+            }
+            default:
+                finished = true;
+                return;
+        }
     }
 }
 
