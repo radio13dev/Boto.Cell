@@ -254,28 +254,31 @@ public partial struct Virus_InputSystem : ISystem
                 {
                     if (input.ActionRef != Entity.Null)
                     {
-                        // Drain!
-                        virus.DNA.Value++;
-
-                        // Animation stuff:
-                        virusAnimData.TimeSinceDNAChange++;
-                        // Update groups
-                        int len = math.max((1 + 64 - math.lzcnt(virus.DNA.Value)) / 2, 1);
-                        while (groups.Length < len)
-                            groups.Add(new DNA.Group() { Transform = groups.Length > 0 ? groups[^1].Transform : transform });
-                        while (particles.Length < 256)
-                            particles.Add(new());
-                        // Add particle anim stuff
-                        byte indexInLowestGroup = (byte)((virus.DNA.Value - 1) & 3);
-                        AddNewDnaParticle(ref particles, indexInLowestGroup, transform); // 0, 1, 2, or 3
-                        if (indexInLowestGroup == 3) // This occurs each time we add the 4th item
+                        for (int i = 0; i <= virus.Skills.DnaDrainLevel; i++)
                         {
-                            // Merge lowest 4 particles
-                            MergeParticles(ref mergers,
-                                valueToApproach: virus.DNA.Value,
-                                depthToMergeFrom: 0,
-                                groups[0].Transform, collider.Radius);
-                            DeleteParticles(ref particles, 0, 4);
+                            // Drain!
+                            virus.DNA.Value++;
+
+                            // Animation stuff:
+                            virusAnimData.TimeSinceDNAChange++;
+                            // Update groups
+                            int len = math.max((1 + 64 - math.lzcnt(virus.DNA.Value)) / 2, 1);
+                            while (groups.Length < len)
+                                groups.Add(new DNA.Group() { Transform = groups.Length > 0 ? groups[^1].Transform : transform });
+                            while (particles.Length < 256)
+                                particles.Add(new());
+                            // Add particle anim stuff
+                            byte indexInLowestGroup = (byte)((virus.DNA.Value - 1) & 3);
+                            AddNewDnaParticle(ref particles, indexInLowestGroup, transform); // 0, 1, 2, or 3
+                            if (indexInLowestGroup == 3) // This occurs each time we add the 4th item
+                            {
+                                // Merge lowest 4 particles
+                                MergeParticles(ref mergers,
+                                    valueToApproach: virus.DNA.Value,
+                                    depthToMergeFrom: 0,
+                                    groups[0].Transform, collider.Radius);
+                                DeleteParticles(ref particles, 0, 4);
+                            }
                         }
                     }
                 }
@@ -785,6 +788,7 @@ public readonly struct RtsCommandBuffer : IBufferElementData
 public struct Virus : IComponentData
 {
     public DNA DNA;
+    public SkillsData Skills;
 
     public struct AnimData : IComponentData
     {
@@ -792,6 +796,11 @@ public struct Virus : IComponentData
         public const float DNAChangeFadeSpeedRelative = 10;
         public float TimeSinceDNAChange;
         public float DNATextScale => 1 + TimeSinceDNAChange;
+    }
+    
+    public struct SkillsData
+    {
+        public byte DnaDrainLevel;
     }
 }
 

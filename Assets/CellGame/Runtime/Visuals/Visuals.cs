@@ -238,10 +238,16 @@ public partial struct PlayerControlSystem : ISystem
             draw.Circle(float3(bestTransform.Position,0), float3(0,0,1), bestCollider.Radius*1.2f);
         }
         
+        var playerE = m_PlayerQuery.GetSingletonEntity();
+        
         float2 cameraTargetPos;
-    
         if (!m_RtsModeEnabled)
         {
+            if (bestEntity == playerE && Mouse.current.press.wasReleasedThisFrame)
+            {
+                Shop.Instance.Toggle();
+            }
+            
             // Commands are sent to player using rts job 'action' operation
             if (Mouse.current.leftButton.wasPressedThisFrame || Mouse.current.rightButton.isPressed)
                 new RtsPlayerActionJob()
@@ -284,7 +290,6 @@ public partial struct PlayerControlSystem : ISystem
             // If we're not dragging, focus on player
             if (!m_IsCameraDragging)
             {
-                var playerE = m_PlayerQuery.GetSingletonEntity();
                 m_FocusedCameraTargetPos = SystemAPI.GetComponent<Transform>(playerE).Position;
             }
             else
