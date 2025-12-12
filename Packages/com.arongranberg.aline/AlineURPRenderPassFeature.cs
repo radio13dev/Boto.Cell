@@ -11,19 +11,6 @@ namespace Drawing {
 	public class AlineURPRenderPassFeature : ScriptableRendererFeature {
 		/// <summary>Custom Universal Render Pipeline Render Pass for ALINE</summary>
 		public class AlineURPRenderPass : ScriptableRenderPass {
-			/// <summary>This method is called before executing the render pass</summary>
-#if MODULE_RENDER_PIPELINES_UNIVERSAL_17_0_0_OR_NEWER
-			[System.Obsolete]
-#endif
-			public override void Configure (CommandBuffer cmd, RenderTextureDescriptor cameraTextureDescriptor) {
-			}
-
-#if MODULE_RENDER_PIPELINES_UNIVERSAL_17_0_0_OR_NEWER
-			[System.Obsolete]
-#endif
-			public override void Execute (ScriptableRenderContext context, ref RenderingData renderingData) {
-				DrawingManager.instance.ExecuteCustomRenderPass(context, renderingData.cameraData.camera);
-			}
 
 			public AlineURPRenderPass() : base() {
 				profilingSampler = new ProfilingSampler("ALINE");
