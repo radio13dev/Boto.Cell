@@ -1,24 +1,25 @@
 {
-	"name": "Boto.Cell.Visuals",
-	"rootNamespace": "",
-	"references": [
-		"Unity.Entities",
-		"Unity.Transforms",
-		"Unity.Mathematics",
-		"Unity.Collections",
-		"Unity.Entities.Hybrid",
-		"Unity.Burst",
-		"Unity.InputSystem",
-		"ALINE",
-		"Boto.CellGame"
-	],
-	"includePlatforms": [],
-	"excludePlatforms": [],
-	"allowUnsafeCode": false,
-	"overrideReferences": false,
-	"precompiledReferences": [],
-	"autoReferenced": true,
-	"defineConstraints": [],
-	"versionDefines": [],
-	"noEngineReferences": false
+    "name": "Boto.Cell.Visuals",
+    "rootNamespace": "",
+    "references": [
+        "Unity.Entities",
+        "Unity.Transforms",
+        "Unity.Mathematics",
+        "Unity.Collections",
+        "Unity.Entities.Hybrid",
+        "Unity.Burst",
+        "Unity.InputSystem",
+        "ALINE",
+        "Boto.CellGame",
+        "Boto.Utility"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }
