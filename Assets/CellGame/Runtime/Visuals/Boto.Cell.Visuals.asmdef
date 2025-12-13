@@ -11,7 +11,8 @@
         "Unity.InputSystem",
         "ALINE",
         "Boto.CellGame",
-        "Boto.Utility"
+        "Boto.Utility",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

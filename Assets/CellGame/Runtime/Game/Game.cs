@@ -21,6 +21,8 @@ public partial struct Game : ISystem
 
     public void OnCreate(ref SystemState state)
     {
+        state.EntityManager.CreateSingleton<ShopData>();
+    
         m_ArchetypeVirus = state.EntityManager.CreateArchetype(
             // Main
             typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider),
@@ -28,7 +30,7 @@ public partial struct Game : ISystem
             typeof(HasParentTag), typeof(Parent), 
             typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
             // Animation
-            typeof(Virus.AnimData), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
+            typeof(Virus.AnimData), typeof(DNA), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
         );
         m_ArchetypeCell = state.EntityManager.CreateArchetype(
             // Main
@@ -204,8 +206,18 @@ public partial struct InputSystem : ISystem
     }
 }
 
+public struct ShopData : IComponentData
+{
+    public int DrillTier;
+}
+
 public partial struct Virus_InputSystem : ISystem
 {
+    public void OnCreate(ref SystemState state)
+    {
+        state.RequireForUpdate<ShopData>();
+    }
+
     public void OnUpdate(ref SystemState state)
     {
         var ecb = new EntityCommandBuffer(Allocator.TempJob);
@@ -215,7 +227,8 @@ public partial struct Virus_InputSystem : ISystem
             time = SystemAPI.Time.ElapsedTime,
             dt = SystemAPI.Time.DeltaTime,
             ParentTransformLookup = SystemAPI.GetComponentLookup<ParentTransform>(true),
-            ParentColliderLookup = SystemAPI.GetComponentLookup<Collider>(true)
+            ParentColliderLookup = SystemAPI.GetComponentLookup<Collider>(true),
+            ShopPurchases = SystemAPI.GetSingleton<ShopData>()
         }.Schedule(state.Dependency);
         state.Dependency.Complete();
         ecb.Playback(state.EntityManager);
@@ -223,15 +236,16 @@ public partial struct Virus_InputSystem : ISystem
     }
 
     [WithPresent(typeof(Parent))]
-    partial struct Job : IJobEntity
+    public partial struct Job : IJobEntity
     {
         public EntityCommandBuffer ecb;
         [ReadOnly] public double time;
         [ReadOnly] public float dt;
         [ReadOnly] public ComponentLookup<ParentTransform> ParentTransformLookup;
         [ReadOnly] public ComponentLookup<Collider> ParentColliderLookup;
+        [ReadOnly] public ShopData ShopPurchases;
 
-        public unsafe void Execute(Entity entity, ref Virus virus, ref Virus.AnimData virusAnimData, ref Transform transform, ref Velocity velocity, in Collider collider,
+        public unsafe void Execute(Entity entity, in Virus virus, ref DNA dna, ref Virus.AnimData virusAnimData, ref Transform transform, ref Velocity velocity, in Collider collider,
             ref Input input, ref Parent oldParentData,
             ref DynamicBuffer<DNA.Group> groups, ref DynamicBuffer<DNA.Particle> particles, ref DynamicBuffer<DNA.Merger> mergers)
         {
@@ -254,27 +268,27 @@ public partial struct Virus_InputSystem : ISystem
                 {
                     if (input.ActionRef != Entity.Null)
                     {
-                        for (int i = 0; i <= virus.Skills.DnaDrainLevel; i++)
+                        for (int i = 0; i <= ShopPurchases.DrillTier; i++)
                         {
                             // Drain!
-                            virus.DNA.Value++;
+                            dna.Value++;
 
                             // Animation stuff:
                             virusAnimData.TimeSinceDNAChange++;
                             // Update groups
-                            int len = math.max((1 + 64 - math.lzcnt(virus.DNA.Value)) / 2, 1);
+                            int len = math.max((1 + 64 - math.lzcnt(dna.Value)) / 2, 1);
                             while (groups.Length < len)
                                 groups.Add(new DNA.Group() { Transform = groups.Length > 0 ? groups[^1].Transform : transform });
                             while (particles.Length < 256)
                                 particles.Add(new());
                             // Add particle anim stuff
-                            byte indexInLowestGroup = (byte)((virus.DNA.Value - 1) & 3);
+                            byte indexInLowestGroup = (byte)((dna.Value - 1) & 3);
                             AddNewDnaParticle(ref particles, indexInLowestGroup, transform); // 0, 1, 2, or 3
                             if (indexInLowestGroup == 3) // This occurs each time we add the 4th item
                             {
                                 // Merge lowest 4 particles
                                 MergeParticles(ref mergers,
-                                    valueToApproach: virus.DNA.Value,
+                                    valueToApproach: dna.Value,
                                     depthToMergeFrom: 0,
                                     groups[0].Transform, collider.Radius);
                                 DeleteParticles(ref particles, 0, 4);
@@ -354,21 +368,7 @@ public partial struct Virus_InputSystem : ISystem
 
                 if (merger.IsComplete)
                 {
-                    // Particles completed merge, create a 4th one and delete mergers
-                    var zeroIndex = (1 + merger.DepthToMergeFrom) << 2;
-                    var filledAtMerge = (byte)(((merger.ValueToApproach - 1) >> (2 + 2 * merger.DepthToMergeFrom)) & 3);
-                    AddNewDnaParticle(ref particles, zeroIndex + filledAtMerge, targetGroup.Transform);
-
-                    // Check if we've closed this group
-                    if (filledAtMerge == 3)
-                    {
-                        // Merge this group
-                        MergeParticles(ref mergers,
-                            valueToApproach: merger.ValueToApproach,
-                            depthToMergeFrom: merger.DepthToMergeFrom + 1,
-                            targetGroup.Transform, collider.Radius);
-                        DeleteParticles(ref particles, zeroIndex, 4);
-                    }
+                    CompleteMerger(ref mergers, ref particles, ref merger, in targetGroup, in collider);
 
                     mergers.RemoveAt(i);
                     i--;
@@ -376,19 +376,38 @@ public partial struct Virus_InputSystem : ISystem
             }
         }
 
-        private void AddNewDnaParticle(ref DynamicBuffer<DNA.Particle> particles, int index, Transform transform)
+        public static void CompleteMerger(ref DynamicBuffer<DNA.Merger> mergers, ref DynamicBuffer<DNA.Particle> particles, ref DNA.Merger merger, in DNA.Group targetGroup, in Collider collider)
+        {
+            // Particles completed merge, create a 4th one and delete mergers
+            var zeroIndex = (1 + merger.DepthToMergeFrom) << 2;
+            var filledAtMerge = (byte)(((merger.ValueToApproach - 1) >> (2 + 2 * merger.DepthToMergeFrom)) & 3);
+            AddNewDnaParticle(ref particles, zeroIndex + filledAtMerge, targetGroup.Transform);
+
+            // Check if we've closed this group
+            if (filledAtMerge == 3)
+            {
+                // Merge this group
+                MergeParticles(ref mergers,
+                    valueToApproach: merger.ValueToApproach,
+                    depthToMergeFrom: merger.DepthToMergeFrom + 1,
+                    targetGroup.Transform, collider.Radius);
+                DeleteParticles(ref particles, zeroIndex, 4);
+            }
+        }
+
+        public static void AddNewDnaParticle(ref DynamicBuffer<DNA.Particle> particles, int index, Transform transform)
         {
             ref var particle = ref particles.ElementAt(index);
             particle.Active = true;
         }
 
-        private void DeleteParticles(ref DynamicBuffer<DNA.Particle> particles, int offset, int length)
+        public static void DeleteParticles(ref DynamicBuffer<DNA.Particle> particles, int offset, int length)
         {
             for (int i = 0; i < length; i++)
                 particles.ElementAt(i + offset).Active = false;
         }
 
-        private static void MergeParticles(ref DynamicBuffer<DNA.Merger> mergers, ulong valueToApproach, int depthToMergeFrom,
+        public static void MergeParticles(ref DynamicBuffer<DNA.Merger> mergers, ulong valueToApproach, int depthToMergeFrom,
             Transform zero, float scale)
         {
             mergers.Add(new DNA.Merger(
@@ -787,9 +806,6 @@ public readonly struct RtsCommandBuffer : IBufferElementData
 
 public struct Virus : IComponentData
 {
-    public DNA DNA;
-    public SkillsData Skills;
-
     public struct AnimData : IComponentData
     {
         public const float DNAChangeFadeSpeedLinear = 2;
@@ -797,14 +813,9 @@ public struct Virus : IComponentData
         public float TimeSinceDNAChange;
         public float DNATextScale => 1 + TimeSinceDNAChange;
     }
-    
-    public struct SkillsData
-    {
-        public byte DnaDrainLevel;
-    }
 }
 
-public struct DNA
+public struct DNA : IComponentData
 {
     public ulong Value;
 

@@ -27,11 +27,11 @@
       "hash": "6fc9f9a5f5d5ed36b89f95e44061dc52e564d3de"
     },
     "com.unity.2d.animation": {
-      "version": "14.0.1",
+      "version": "14.0.2",
       "depth": 0,
       "source": "registry",
       "dependencies": {
-        "com.unity.2d.common": "13.0.0",
+        "com.unity.2d.common": "13.0.1",
         "com.unity.2d.sprite": "1.0.0",
         "com.unity.collections": "2.4.3",
         "com.unity.modules.animation": "1.0.0",
@@ -53,7 +53,7 @@
       "url": "https://packages.unity.com"
     },
     "com.unity.2d.common": {
-      "version": "13.0.0",
+      "version": "13.0.1",
       "depth": 1,
       "source": "registry",
       "dependencies": {
@@ -197,7 +197,7 @@
       "url": "https://packages.unity.com"
     },
     "com.unity.inputsystem": {
-      "version": "1.15.0",
+      "version": "1.17.0",
       "depth": 0,
       "source": "registry",
       "dependencies": {
@@ -266,7 +266,7 @@
       }
     },
     "com.unity.scriptablebuildpipeline": {
-      "version": "2.4.2",
+      "version": "2.4.3",
       "depth": 1,
       "source": "registry",
       "dependencies": {
