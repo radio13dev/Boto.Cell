@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -22,19 +21,19 @@ public partial struct Game : ISystem
     public void OnCreate(ref SystemState state)
     {
         state.EntityManager.CreateSingleton<ShopData>();
-    
+
         m_ArchetypeVirus = state.EntityManager.CreateArchetype(
             // Main
             typeof(Virus), typeof(Transform), typeof(Velocity), typeof(Collider),
             typeof(Transform.FaceMoveDirection),
-            typeof(HasParentTag), typeof(Parent), 
+            typeof(HasParentTag), typeof(Parent),
             typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
             // Animation
-            typeof(Virus.AnimData), typeof(DNA), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger)
+            typeof(Virus.AnimData)
         );
         m_ArchetypeCell = state.EntityManager.CreateArchetype(
             // Main
-            typeof(Cell), typeof(Transform), typeof(Velocity), typeof(Collider), 
+            typeof(Cell), typeof(Transform), typeof(Velocity), typeof(Collider),
             typeof(HasChildrenTag), typeof(ChildrenDirty), typeof(ParentTransform), typeof(Children),
             typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
             // Animation
@@ -103,6 +102,7 @@ public partial struct MovementSystem : ISystem
             velocity.Value += -velocity.Value * dt;
         }
     }
+
     [WithNone(typeof(HasParentTag))]
     [WithNone(typeof(Transform.FaceMoveDirection))]
     partial struct DontFaceDirectionJob : IJobEntity
@@ -137,36 +137,6 @@ public partial struct MovementSystem : ISystem
             var parentT = ParentTransformLookup[parent.Entity];
             transform = parentT.Transform.TransformTransform(parent.Offset);
             velocity = parentT.Velocity;
-        }
-    }
-}
-
-[UpdateBefore(typeof(InputSystem))]
-public partial struct RtsInputProcessSystem : ISystem
-{
-    public void OnUpdate(ref SystemState state)
-    {
-        new Job()
-        {
-            TransformLookup = SystemAPI.GetComponentLookup<Transform>(true)
-        }.Schedule();
-    }
-    
-    partial struct Job : IJobEntity
-    {
-        [ReadOnly] public ComponentLookup<Transform> TransformLookup;
-    
-        public void Execute(ref DynamicBuffer<RtsCommandBuffer> commands, ref RtsCommandBuffer.Memory memory, in Transform transform, in Collider collider, ref Input input)
-        {
-            if (commands.Length == 0) return;
-
-            var command = commands[0];
-            command.Execute(ref memory, ref TransformLookup, in transform, in collider, ref input, out bool finished);
-            if (finished)
-            {
-                memory.Clear();
-                commands.RemoveAt(0);
-            }
         }
     }
 }
@@ -211,6 +181,87 @@ public struct ShopData : IComponentData
     public int DrillTier;
 }
 
+public partial struct DnaChangesProcessSystem : ISystem
+{
+    const bool AnimationsEnabled = true;
+
+    EntityQuery m_DnaSourceQuery;
+    public void OnCreate(ref SystemState state)
+    {
+        state.EntityManager.CreateSingleton<DNA>();
+        state.RequireForUpdate<DNA>();
+        
+        state.EntityManager.CreateSingleton<DNA.Changes>();
+        SystemAPI.SetSingleton(new DNA.Changes(new NativeList<DNA.Change>(256, Allocator.Persistent)));
+        state.RequireForUpdate<DNA.Changes>();
+        
+        m_DnaSourceQuery = SystemAPI.QueryBuilder().WithAll<DNA.Source>().Build();
+        
+        
+    }
+
+    public void OnDestroy(ref SystemState state)
+    {
+        SystemAPI.GetSingleton<DNA.Changes>().Data.Dispose();
+    }
+
+    public void OnUpdate(ref SystemState state)
+    {
+        // Get shop data
+        var shopData = SystemAPI.GetSingleton<ShopData>();
+    
+        // Increment
+        var addCount = m_DnaSourceQuery.CalculateEntityCount();
+    
+        // Animations
+        if (AnimationsEnabled)
+        {
+            ref var changes = ref SystemAPI.GetSingletonRW<DNA.Changes>().ValueRW;
+            changes.Data.SetCapacity(changes.Data.Length + addCount);
+            state.Dependency = new DnaSourceAnimationJob()
+            {
+                ShopData = shopData,
+                DnaChanges = changes.Data.AsParallelWriter()
+            }.ScheduleParallel(state.Dependency);
+            state.CompleteDependency();
+            
+            // Start doing animations
+            ref var animations = ref SystemAPI.GetSingletonRW<DNA.AnimData>().ValueRW;
+            // Add change effects
+            for (int i = 0; i < changes.Data.Length; i++)
+            {
+                var change = changes.Data[i];
+                animations.ApplyChange(change);
+            }
+            // Clear changes list
+            changes.Data.Clear();
+        }
+        
+        SystemAPI.GetSingletonRW<DNA>().ValueRW.Value += (ulong)addCount*(ulong)shopData.DrillTier;
+        
+        state.Dependency = new DnaSourceConsumptionJob().ScheduleParallel(state.Dependency);
+        state.CompleteDependency();
+        
+    }
+    
+    partial struct DnaSourceAnimationJob : IJobEntity
+    {
+        [ReadOnly] public ShopData ShopData;
+        public NativeList<DNA.Change>.ParallelWriter DnaChanges;
+        public void Execute(in Transform transform)
+        {
+            DnaChanges.AddNoResize(new DNA.Change(transform, ShopData.DrillTier+1));
+        }
+    }
+    partial struct DnaSourceConsumptionJob : IJobEntity
+    {
+        public void Execute(EnabledRefRW<DNA.Source> sourceState)
+        {
+            sourceState.ValueRW = false;
+        }
+    }
+}
+
 public partial struct Virus_InputSystem : ISystem
 {
     public void OnCreate(ref SystemState state)
@@ -228,7 +279,7 @@ public partial struct Virus_InputSystem : ISystem
             dt = SystemAPI.Time.DeltaTime,
             ParentTransformLookup = SystemAPI.GetComponentLookup<ParentTransform>(true),
             ParentColliderLookup = SystemAPI.GetComponentLookup<Collider>(true),
-            ShopPurchases = SystemAPI.GetSingleton<ShopData>()
+            ShopPurchases = SystemAPI.GetSingleton<ShopData>(),
         }.Schedule(state.Dependency);
         state.Dependency.Complete();
         ecb.Playback(state.EntityManager);
@@ -236,6 +287,7 @@ public partial struct Virus_InputSystem : ISystem
     }
 
     [WithPresent(typeof(Parent))]
+    [WithPresent(typeof(DNA.Source))]
     public partial struct Job : IJobEntity
     {
         public EntityCommandBuffer ecb;
@@ -245,9 +297,9 @@ public partial struct Virus_InputSystem : ISystem
         [ReadOnly] public ComponentLookup<Collider> ParentColliderLookup;
         [ReadOnly] public ShopData ShopPurchases;
 
-        public unsafe void Execute(Entity entity, in Virus virus, ref DNA dna, ref Virus.AnimData virusAnimData, ref Transform transform, ref Velocity velocity, in Collider collider,
+        public unsafe void Execute(Entity entity, in Virus virus, in Virus.AnimData virusAnimData, ref Transform transform, ref Velocity velocity, in Collider collider,
             ref Input input, ref Parent oldParentData,
-            ref DynamicBuffer<DNA.Group> groups, ref DynamicBuffer<DNA.Particle> particles, ref DynamicBuffer<DNA.Merger> mergers)
+            EnabledRefRW<DNA.Source> dnaCollected)
         {
             if (input.Action == 1)
             {
@@ -268,32 +320,7 @@ public partial struct Virus_InputSystem : ISystem
                 {
                     if (input.ActionRef != Entity.Null)
                     {
-                        for (int i = 0; i <= ShopPurchases.DrillTier; i++)
-                        {
-                            // Drain!
-                            dna.Value++;
-
-                            // Animation stuff:
-                            virusAnimData.TimeSinceDNAChange++;
-                            // Update groups
-                            int len = math.max((1 + 64 - math.lzcnt(dna.Value)) / 2, 1);
-                            while (groups.Length < len)
-                                groups.Add(new DNA.Group() { Transform = groups.Length > 0 ? groups[^1].Transform : transform });
-                            while (particles.Length < 256)
-                                particles.Add(new());
-                            // Add particle anim stuff
-                            byte indexInLowestGroup = (byte)((dna.Value - 1) & 3);
-                            AddNewDnaParticle(ref particles, indexInLowestGroup, transform); // 0, 1, 2, or 3
-                            if (indexInLowestGroup == 3) // This occurs each time we add the 4th item
-                            {
-                                // Merge lowest 4 particles
-                                MergeParticles(ref mergers,
-                                    valueToApproach: dna.Value,
-                                    depthToMergeFrom: 0,
-                                    groups[0].Transform, collider.Radius);
-                                DeleteParticles(ref particles, 0, 4);
-                            }
-                        }
+                        dnaCollected.ValueRW = true;
                     }
                 }
                 else
@@ -313,7 +340,7 @@ public partial struct Virus_InputSystem : ISystem
                         // Push us out of the parent collider
                         Collider.MoveOutOf(transform.Position, collider, newParentT.Transform.Position, parentC, out float2 shift, out _);
                         transform.Position += shift;
-                        transform.Direction = math.normalizesafe(newParentT.Transform.Position - transform.Position, float2(1,0));
+                        transform.Direction = math.normalizesafe(newParentT.Transform.Position - transform.Position, float2(1, 0));
 
                         // Setup child-to-parent link
                         var newParentData = new Parent()
@@ -338,84 +365,6 @@ public partial struct Virus_InputSystem : ISystem
             }
 
             input.Clear();
-
-
-            // ...
-
-            // Update group positions
-            var lastT = transform;
-            var lastR = collider.Radius / 2;
-            for (int i = 0; i < groups.Length; i++)
-            {
-                // First one must be at least x units from player
-                // Next one must be x units from the last
-                // Etc...
-                var t = groups[i].Transform;
-                var r = collider.Radius / 4;
-                Collider.MoveOutOf(t.Position, new Collider() { Radius = r }, lastT.Position, new Collider() { Radius = lastR }, out float2 shift, out _);
-                groups.ElementAt(i).Transform.Position += math.lerp(0, shift, math.clamp(dt * 10, 0, 1));
-                lastT = t;
-                lastR = r;
-            }
-
-            // ...
-
-            for (int i = 0; i < mergers.Length; i++)
-            {
-                ref var merger = ref mergers.ElementAt(i);
-                var targetGroup = groups[merger.DepthToMergeFrom + 1];
-                merger.Update(dt, targetGroup.Transform, collider.Radius);
-
-                if (merger.IsComplete)
-                {
-                    CompleteMerger(ref mergers, ref particles, ref merger, in targetGroup, in collider);
-
-                    mergers.RemoveAt(i);
-                    i--;
-                }
-            }
-        }
-
-        public static void CompleteMerger(ref DynamicBuffer<DNA.Merger> mergers, ref DynamicBuffer<DNA.Particle> particles, ref DNA.Merger merger, in DNA.Group targetGroup, in Collider collider)
-        {
-            // Particles completed merge, create a 4th one and delete mergers
-            var zeroIndex = (1 + merger.DepthToMergeFrom) << 2;
-            var filledAtMerge = (byte)(((merger.ValueToApproach - 1) >> (2 + 2 * merger.DepthToMergeFrom)) & 3);
-            AddNewDnaParticle(ref particles, zeroIndex + filledAtMerge, targetGroup.Transform);
-
-            // Check if we've closed this group
-            if (filledAtMerge == 3)
-            {
-                // Merge this group
-                MergeParticles(ref mergers,
-                    valueToApproach: merger.ValueToApproach,
-                    depthToMergeFrom: merger.DepthToMergeFrom + 1,
-                    targetGroup.Transform, collider.Radius);
-                DeleteParticles(ref particles, zeroIndex, 4);
-            }
-        }
-
-        public static void AddNewDnaParticle(ref DynamicBuffer<DNA.Particle> particles, int index, Transform transform)
-        {
-            ref var particle = ref particles.ElementAt(index);
-            particle.Active = true;
-        }
-
-        public static void DeleteParticles(ref DynamicBuffer<DNA.Particle> particles, int offset, int length)
-        {
-            for (int i = 0; i < length; i++)
-                particles.ElementAt(i + offset).Active = false;
-        }
-
-        public static void MergeParticles(ref DynamicBuffer<DNA.Merger> mergers, ulong valueToApproach, int depthToMergeFrom,
-            Transform zero, float scale)
-        {
-            mergers.Add(new DNA.Merger(
-                valueToApproach,
-                depthToMergeFrom,
-                zero,
-                scale
-            ));
         }
     }
 }
@@ -494,8 +443,10 @@ public struct Transform : IComponentData
     public float2 Position;
     public float2 Direction;
     public float2 Right => float2(-Direction.y, Direction.x);
-    
-    public struct FaceMoveDirection : IComponentData { }
+
+    public struct FaceMoveDirection : IComponentData
+    {
+    }
 
     public static Transform FromPosition(float2 position) => FromPositionRotation(position, 0);
 
@@ -706,193 +657,14 @@ public struct Input : IComponentData
 }
 
 
-[StructLayout(LayoutKind.Explicit, Size = sizeof(byte)+sizeof(float)*3, Pack = 2)]
-public readonly struct RtsCommandBuffer : IBufferElementData
-{
-    public const int MaxBufferSize = 200;
-    public enum eType : byte
-    {
-        Move,
-        Interact
-    }
-    
-    [FieldOffset(0)] 
-    public readonly eType Type;
-    [FieldOffset(1)] public readonly Entity Entity;
-    [FieldOffset(1)] public readonly float2 float2;
-    
-    
-    public static RtsCommandBuffer Interact(Entity entity) => new RtsCommandBuffer(entity);
-    RtsCommandBuffer(Entity entity) : this()
-    {
-        Type = eType.Interact;
-        Entity = entity;
-    }
-
-    public static RtsCommandBuffer Move(float2 position) => new RtsCommandBuffer(position);
-    RtsCommandBuffer(float2 position) : this()
-    {
-        Type = eType.Move;
-        float2 = position;
-    }
-    
-    public struct Memory : IComponentData
-    {
-        public float NearestDistance;
-
-        public void Clear()
-        {
-            NearestDistance = float.MaxValue;
-        }
-    }
-
-    public float2 GetPosition(ref ComponentLookup<Transform> transformLookup)
-    {
-        switch (Type)
-        {
-            case eType.Move: 
-                return float2;
-            case eType.Interact: 
-                if (transformLookup.TryGetComponent(Entity, out var target)) 
-                    return target.Position; 
-                else 
-                    break;
-        }
-        
-        return default;
-    }
-
-    public void Execute(ref Memory memory, ref ComponentLookup<Transform> TransformLookup, in Transform transform, in Collider collider, ref Input input, out bool finished)
-    {
-        finished = false;
-        switch (Type)
-        {
-            case RtsCommandBuffer.eType.Move:
-            {
-                var d = math.distance(transform.Position, float2);
-                if (d > collider.Radius)
-                {
-                    memory.NearestDistance = d;
-                        
-                    input.Action = 1;
-                    input.Vec0 = float2 - transform.Position;
-                }
-                else
-                {
-                    finished = true;
-                }
-                break;
-            }
-            case RtsCommandBuffer.eType.Interact:
-            {
-                if (TransformLookup.TryGetComponent(Entity, out var target))
-                {
-                    input.Action = 1;
-                    input.ActionRef = Entity;
-                    input.Vec0 = TransformLookup[Entity].Position - transform.Position;
-                }
-                else
-                {
-                    finished = true;
-                }
-                break;
-            }
-            default:
-                finished = true;
-                return;
-        }
-    }
-}
-
 public struct Virus : IComponentData
 {
     public struct AnimData : IComponentData
     {
-        public const float DNAChangeFadeSpeedLinear = 2;
-        public const float DNAChangeFadeSpeedRelative = 10;
-        public float TimeSinceDNAChange;
-        public float DNATextScale => 1 + TimeSinceDNAChange;
     }
 }
 
-public struct DNA : IComponentData
-{
-    public ulong Value;
-
-    public struct Group : IBufferElementData
-    {
-        public Transform Transform;
-    }
-
-    public struct Particle : IBufferElementData
-    {
-        public bool Active;
-    }
-
-    public unsafe struct Merger : IBufferElementData
-    {
-        public float2 ParticleA;
-        public float2 ParticleB;
-        public float2 ParticleC;
-        public float2 ParticleD;
-        public readonly ulong ValueToApproach;
-        public readonly int DepthToMergeFrom;
-
-        public float T;
-        public bool IsComplete => T >= 1;
-
-        public Merger(ulong valueToApproach, int depthToMergeFrom, Transform zero, float scale)
-        {
-            ValueToApproach = valueToApproach;
-            DepthToMergeFrom = depthToMergeFrom;
-
-            float innerSpacing = scale / 8;
-            ParticleA = zero.Position + zero.Direction * innerSpacing + zero.Right * innerSpacing;
-            ParticleB = zero.Position + zero.Direction * innerSpacing - zero.Right * innerSpacing;
-            ParticleC = zero.Position - zero.Direction * innerSpacing + zero.Right * innerSpacing;
-            ParticleD = zero.Position - zero.Direction * innerSpacing - zero.Right * innerSpacing;
-
-            T = 0;
-        }
-
-        public void Update(float dt, Transform zero, float scale)
-        {
-            T += dt * 5;
-
-            float innerSpacing = scale / 8;
-            var bits = (byte)(((ValueToApproach - 1) >> (2 + 2 * DepthToMergeFrom)) & 3);
-            if (bits == 0) zero.Position += zero.Direction * innerSpacing + zero.Right * innerSpacing;
-            if (bits == 1) zero.Position += zero.Direction * innerSpacing - zero.Right * innerSpacing;
-            if (bits == 2) zero.Position += -zero.Direction * innerSpacing + zero.Right * innerSpacing;
-            if (bits == 3) zero.Position += -zero.Direction * innerSpacing - zero.Right * innerSpacing;
-
-            ParticleA = math.lerp(ParticleA, zero.Position, T);
-            ParticleB = math.lerp(ParticleB, zero.Position, T);
-            ParticleC = math.lerp(ParticleC, zero.Position, T);
-            ParticleD = math.lerp(ParticleD, zero.Position, T);
-        }
-
-        public static Transform lerp(Transform a, Transform b, float t)
-        {
-            var aAng = math.atan2(a.Direction.y, a.Direction.x);
-            var bAng = math.atan2(b.Direction.y, b.Direction.x);
-            return Transform.FromPositionRotation(math.lerp(a.Position, b.Position, t), LerpAngle(aAng, bAng, t));
-        }
-
-        public static float LerpAngle(float a, float b, float t)
-        {
-            float num = Repeat(b - a, math.PI2);
-            if ((double)num > 180.0)
-                num -= 360f;
-            return a + num * math.clamp(t, 0, 1);
-        }
-
-        public static float Repeat(float t, float length)
-        {
-            return math.clamp(t - math.floor(t / length) * length, 0.0f, length);
-        }
-    }
-}
+// Currency for shop
 
 public struct AttachToEntity : IComponentData, IEnableableComponent
 {
