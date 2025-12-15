@@ -14,6 +14,16 @@ using quaternion = Unity.Mathematics.quaternion;
 
 public partial struct Visuals : ISystem
 {
+    EntityQuery m_PlayerTransformQuery;
+
+    public void OnCreate(ref SystemState state)
+    {
+        state.RequireForUpdate<DNA.AnimData>();
+        state.RequireForUpdate<Player>();
+        
+        m_PlayerTransformQuery = SystemAPI.QueryBuilder().WithAll<Player, Transform, Collider>().Build();
+    }
+
     public void OnUpdate(ref SystemState state)
     {
         var builder = DrawingManager.GetBuilder(true);
@@ -24,6 +34,10 @@ public partial struct Visuals : ISystem
         }.Schedule(state.Dependency);
         var dnaDrawJob = new DnaDrawJob()
         {
+            Zero = m_PlayerTransformQuery.GetSingleton<Transform>(),
+            ZeroCollider = m_PlayerTransformQuery.GetSingleton<Collider>(),
+            AnimData = SystemAPI.GetSingleton<DNA.AnimData>(),
+            
             dt = SystemAPI.Time.DeltaTime,
             CommandBuilder = builder
         }.Schedule(state.Dependency);
@@ -32,14 +46,14 @@ public partial struct Visuals : ISystem
             dt = SystemAPI.Time.DeltaTime,
             CommandBuilder = builder
         }.Schedule(state.Dependency);
-        var RtsCommandDrawJob = new RtsCommandDrawJob()
+        var rtsCommandDrawJob = new RtsCommandDrawJob()
         {
             dt = SystemAPI.Time.DeltaTime,
             TransformLookup = SystemAPI.GetComponentLookup<Transform>(true),
             CommandBuilder = builder
         }.Schedule(state.Dependency);
         state.Dependency = JobHandle.CombineDependencies(virusDrawJob, dnaDrawJob, cellDrawJob);
-        state.Dependency = JobHandle.CombineDependencies(state.Dependency, RtsCommandDrawJob);
+        state.Dependency = JobHandle.CombineDependencies(state.Dependency, rtsCommandDrawJob);
         builder.DisposeAfter(state.Dependency);
     }
     
@@ -50,49 +64,54 @@ public partial struct Visuals : ISystem
         public void Execute(in Virus virus, ref Virus.AnimData animData, in Transform position, in Collider collider)
         {
             CommandBuilder.Arrowhead(float3(position.Position, 0), float3(position.Direction, 0), float3(0,0,1), collider.Radius);
-            //CommandBuilder.Label2D(float3(position.Position - position.Direction, 0), virus.DNA.Value.ToString(), 14*animData.DNATextScale, LabelAlignment.Center);
-            animData.TimeSinceDNAChange -= math.clamp(dt*Virus.AnimData.DNAChangeFadeSpeedLinear, -abs(animData.TimeSinceDNAChange), abs(animData.TimeSinceDNAChange));
-            animData.TimeSinceDNAChange -= dt*animData.TimeSinceDNAChange*Virus.AnimData.DNAChangeFadeSpeedRelative;
         }
     }
         
-    partial struct DnaDrawJob : IJobEntity
+    partial struct DnaDrawJob : IJob
     {
+        [ReadOnly] public Transform Zero;
+        [ReadOnly] public Collider ZeroCollider;
+        [ReadOnly] public DNA.AnimData AnimData;
+        
         [ReadOnly] public float dt;
         public CommandBuilder CommandBuilder;
-        public void Execute(in Transform position, in Collider collider, in DynamicBuffer<DNA.Group> groups, in DynamicBuffer<DNA.Particle> particles, in DynamicBuffer<DNA.Merger> mergers)
+        public void Execute()
         {
+            //CommandBuilder.Label2D(float3(position.Position - position.Direction, 0), virus.DNA.Value.ToString(), 14*animData.DNATextScale, LabelAlignment.Center);
+            AnimData.TimeSinceDNAChange -= math.clamp(dt*DNA.AnimData.DNAChangeFadeSpeedLinear, -abs(AnimData.TimeSinceDNAChange), abs(AnimData.TimeSinceDNAChange));
+            AnimData.TimeSinceDNAChange -= dt*AnimData.TimeSinceDNAChange*DNA.AnimData.DNAChangeFadeSpeedRelative;
+            
             // Display DNA in base 4
+            var groups = AnimData.Groups;
+            var particles = AnimData.Particles;
+            var mergers = AnimData.Mergers;
             for (int i = 0; i < groups.Length; i++)
             {
-                var p = float3(groups[i].Transform.Position,0);
-                var dir = float3(groups[i].Transform.Direction, 0);
+                var group = groups[i];
+                var p = float3(group.Position,0);
+                var dir = float3(group.Direction, 0);
                 var rot = quaternion.LookRotation(dir, float3(0,0,1));
                 
-                var t = LocalTransform.FromPositionRotationScale(p, rot, collider.Radius/2);
+                var dnaGroupScale = DNA.AnimData.GetDnaGroupScale(ZeroCollider);
+                var dnaScale = DNA.AnimData.GetDnaScale(ZeroCollider);
+                var dnaSpacing = DNA.AnimData.GetDnaSpacing(ZeroCollider);
+                
+                var t = LocalTransform.FromPositionRotationScale(p, rot, dnaGroupScale);
                 
                 CommandBuilder.WireRectangle(t.Position, t.Rotation, t.Scale);
                 
-                float innerSpacing = t.Scale/4;
-                float innerScale = t.Scale/5;
-                if (particles[(i<<2) + 0].Active) CommandBuilder.WireRectangle(t.Position + t.Forward()*innerSpacing + t.Right()*innerSpacing, t.Rotation, innerScale);
-                if (particles[(i<<2) + 1].Active) CommandBuilder.WireRectangle(t.Position + t.Forward()*innerSpacing - t.Right()*innerSpacing, t.Rotation, innerScale);
-                if (particles[(i<<2) + 2].Active) CommandBuilder.WireRectangle(t.Position - t.Forward()*innerSpacing + t.Right()*innerSpacing, t.Rotation, innerScale);
-                if (particles[(i<<2) + 3].Active) CommandBuilder.WireRectangle(t.Position - t.Forward()*innerSpacing - t.Right()*innerSpacing, t.Rotation, innerScale);
+                if (particles[(i<<2) + 0]) CommandBuilder.WireRectangle(float3(group.Position + DNA.AnimData.GetOffset(group, 0)*dnaSpacing, 0), t.Rotation, dnaScale);
+                if (particles[(i<<2) + 1]) CommandBuilder.WireRectangle(float3(group.Position + DNA.AnimData.GetOffset(group, 1)*dnaSpacing, 0), t.Rotation, dnaScale);
+                if (particles[(i<<2) + 2]) CommandBuilder.WireRectangle(float3(group.Position + DNA.AnimData.GetOffset(group, 2)*dnaSpacing, 0), t.Rotation, dnaScale);
+                if (particles[(i<<2) + 3]) CommandBuilder.WireRectangle(float3(group.Position + DNA.AnimData.GetOffset(group, 3)*dnaSpacing, 0), t.Rotation, dnaScale);
             }
             
             for (int i = 0; i < mergers.Length; i++)
             {
-                float innerSpacing = collider.Radius/8;
-                float innerScale = collider.Radius/10;
-                
+                var dnaScale = DNA.AnimData.GetDnaScale(ZeroCollider);
                 var merger = mergers[i];
-                var targetGroup = groups[merger.DepthToMergeFrom + 1];
-                var rot = quaternion.LookRotation(float3(targetGroup.Transform.Direction,0), float3(0,0,1));
-                CommandBuilder.WireRectangle(float3(merger.ParticleA,0), rot, innerScale);
-                CommandBuilder.WireRectangle(float3(merger.ParticleB,0), rot, innerScale);
-                CommandBuilder.WireRectangle(float3(merger.ParticleC,0), rot, innerScale);
-                CommandBuilder.WireRectangle(float3(merger.ParticleD,0), rot, innerScale);
+                var rot = quaternion.LookRotation(float3(merger.UnitParticle.Direction,0), float3(0,0,1));
+                CommandBuilder.WireRectangle(float3(merger.UnitParticle.Position,0), rot, dnaScale);
             }
         }
     }

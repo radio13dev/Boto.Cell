@@ -28,6 +28,7 @@ public partial struct Game : ISystem
             typeof(Transform.FaceMoveDirection),
             typeof(HasParentTag), typeof(Parent),
             typeof(Input), typeof(RtsCommandBuffer), typeof(RtsCommandBuffer.Memory),
+            typeof(DNA.Source),
             // Animation
             typeof(Virus.AnimData)
         );
@@ -45,6 +46,7 @@ public partial struct Game : ISystem
         {
             Entity virusE = state.EntityManager.CreateEntity(m_ArchetypeVirus);
             if (i == 0) state.EntityManager.AddComponent<Player>(virusE);
+            state.EntityManager.SetComponentEnabled<DNA.Source>(virusE, false);
             state.EntityManager.SetComponentEnabled<HasParentTag>(virusE, false);
             state.EntityManager.SetComponentData(virusE, new Collider() { Radius = 1, Type = Collider.eType.Circle });
             state.EntityManager.SetComponentData(virusE, Transform.FromPositionRotation(r.NextFloat2(MapSize), r.NextFloat()));
@@ -186,6 +188,8 @@ public partial struct DnaChangesProcessSystem : ISystem
     const bool AnimationsEnabled = true;
 
     EntityQuery m_DnaSourceQuery;
+    EntityQuery m_PlayerTransformQuery;
+    
     public void OnCreate(ref SystemState state)
     {
         state.EntityManager.CreateSingleton<DNA>();
@@ -195,14 +199,18 @@ public partial struct DnaChangesProcessSystem : ISystem
         SystemAPI.SetSingleton(new DNA.Changes(new NativeList<DNA.Change>(256, Allocator.Persistent)));
         state.RequireForUpdate<DNA.Changes>();
         
+        state.EntityManager.CreateSingleton<DNA.AnimData>();
+        SystemAPI.SetSingleton(DNA.AnimData.Default);
+        state.RequireForUpdate<DNA.AnimData>();
+        
         m_DnaSourceQuery = SystemAPI.QueryBuilder().WithAll<DNA.Source>().Build();
-        
-        
+        m_PlayerTransformQuery = SystemAPI.QueryBuilder().WithAll<Player, Transform, Collider>().Build();
     }
 
     public void OnDestroy(ref SystemState state)
     {
         SystemAPI.GetSingleton<DNA.Changes>().Data.Dispose();
+        SystemAPI.GetSingleton<DNA.AnimData>().Dispose();
     }
 
     public void OnUpdate(ref SystemState state)
@@ -235,15 +243,22 @@ public partial struct DnaChangesProcessSystem : ISystem
             }
             // Clear changes list
             changes.Data.Clear();
+            
+            // More animations
+            if (m_PlayerTransformQuery.TryGetSingleton(out Transform playerT) && m_PlayerTransformQuery.TryGetSingleton(out Collider playerC))
+            {
+                animations.UpdateGroups(SystemAPI.Time.DeltaTime, playerT, playerC);
+                animations.UpdateMergers(SystemAPI.Time.DeltaTime, playerT, playerC);
+            }
         }
         
         SystemAPI.GetSingletonRW<DNA>().ValueRW.Value += (ulong)addCount*(ulong)shopData.DrillTier;
         
         state.Dependency = new DnaSourceConsumptionJob().ScheduleParallel(state.Dependency);
         state.CompleteDependency();
-        
     }
     
+    [WithAll(typeof(DNA.Source))]
     partial struct DnaSourceAnimationJob : IJobEntity
     {
         [ReadOnly] public ShopData ShopData;
@@ -442,7 +457,9 @@ public struct Transform : IComponentData
 {
     public float2 Position;
     public float2 Direction;
-    public float2 Right => float2(-Direction.y, Direction.x);
+    public float2 Forward() => Direction;
+    public float2 Right() => float2(-Direction.y, Direction.x);
+    public float Angle() => atan2(Direction.y, Direction.x);
 
     public struct FaceMoveDirection : IComponentData
     {
@@ -486,6 +503,18 @@ public struct Transform : IComponentData
             Position = newPos,
             Direction = newDir
         };
+    }
+
+    public Transform Offset(float2 offset)
+    {
+        var t = this;
+        t.Position += offset;
+        return t;
+    }
+
+    public static Transform Lerp(Transform a, Transform b, float t)
+    {
+        return Transform.FromPositionRotation(math.lerp(a.Position, b.Position, t), mathu.lerpangle(a.Angle(), b.Angle(), t));
     }
 }
 
@@ -661,6 +690,7 @@ public struct Virus : IComponentData
 {
     public struct AnimData : IComponentData
     {
+        public float _;
     }
 }
 
@@ -682,5 +712,6 @@ public struct Cell : IComponentData
 
     public struct AnimData : IComponentData
     {
+        public float _;
     }
 }
