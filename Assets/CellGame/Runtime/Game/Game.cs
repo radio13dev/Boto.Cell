@@ -220,6 +220,7 @@ public partial struct DnaChangesProcessSystem : ISystem
     
         // Increment
         var addCount = m_DnaSourceQuery.CalculateEntityCount();
+        ref var dna = ref SystemAPI.GetSingletonRW<DNA>().ValueRW;
     
         // Animations
         if (AnimationsEnabled)
@@ -236,10 +237,11 @@ public partial struct DnaChangesProcessSystem : ISystem
             // Start doing animations
             ref var animations = ref SystemAPI.GetSingletonRW<DNA.AnimData>().ValueRW;
             // Add change effects
+            var countup = dna.Value;
             for (int i = 0; i < changes.Data.Length; i++)
             {
                 var change = changes.Data[i];
-                animations.ApplyChange(change);
+                animations.ApplyChange(ref countup, change);
             }
             // Clear changes list
             changes.Data.Clear();
@@ -251,8 +253,7 @@ public partial struct DnaChangesProcessSystem : ISystem
                 animations.UpdateMergers(SystemAPI.Time.DeltaTime, playerT, playerC);
             }
         }
-        
-        SystemAPI.GetSingletonRW<DNA>().ValueRW.Value += (ulong)addCount*(ulong)shopData.DrillTier;
+        dna.Add((ulong)addCount*(ulong)(shopData.DrillTier+1));
         
         state.Dependency = new DnaSourceConsumptionJob().ScheduleParallel(state.Dependency);
         state.CompleteDependency();

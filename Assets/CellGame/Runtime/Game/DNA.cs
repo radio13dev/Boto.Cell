@@ -38,6 +38,21 @@ public struct DNA : IComponentData
         }
     }
 
+    // Represents the position of DNA in the tail
+    public struct Position
+    {
+        public byte GroupIndex;
+        public byte InnerGroupIndex;
+
+        public Position(byte groupIndex, byte innerGroupIndex)
+        {
+            GroupIndex = groupIndex;
+            InnerGroupIndex = innerGroupIndex;
+        }
+
+        public int TargetParticleIndex => (GroupIndex<<2)+InnerGroupIndex;
+    }
+
     public struct AnimData : IComponentData, IDisposable
     {
         public static AnimData Default
@@ -48,7 +63,7 @@ public struct DNA : IComponentData
                     new AnimData
                     {
                         Groups  = new NativeArray<Transform>(256, Allocator.Persistent),
-                        Particles = new ParticleBitFlags(),
+                        Particles = new ParticleBitFlags(256*4),
                         Mergers = new NativeList<Merger>(256, Allocator.Persistent)
                     };
                     for (int i = 0; i < data.Groups.Length; i++)
@@ -75,87 +90,110 @@ public struct DNA : IComponentData
         public void Dispose()
         {
             Groups.Dispose();
+            Particles.Dispose();
             Mergers.Dispose();
         }
         
-        public unsafe struct ParticleBitFlags
+        public struct ParticleBitFlags : IDisposable
         {
-            fixed long Groups_0to256[16];
+            NativeBitArray Flags;
+            
+            public ParticleBitFlags(int length)
+            {
+                Flags = new NativeBitArray(length, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+            }
             
             public bool this[int index]
             {
                 get
                 {
-                    // Find the long containing this (each long contains 16 groups)
-                    var groupLong = index >> 4;
-                    var bitPosition = index&63;
-                    var val = Groups_0to256[groupLong];
-                    return (val & (1L << bitPosition)) > 0;
+                    return Flags.IsSet(index);
                 }
                 set
                 {
-                    // Find the long containing this (each long contains 16 groups)
-                    var groupLong = index >> 4;
-                    var bitPosition = index%64;
-                    var val = Groups_0to256[groupLong];
-                    val = (val & ~(1L << bitPosition)) | ((value ? 1L : 0L) << bitPosition);
-                    Groups_0to256[groupLong] = val;
+                    Flags.Set(index, value);
                 }
             }
-        }
 
+            public byte GetEmptyIndexIngroup(int groupIndex)
+            {
+                var zero = groupIndex << 2;
+                if (this[zero]) return 0;
+                if (this[zero + 1]) return 1;
+                if (this[zero + 2]) return 2;
+                return 3;
+            }
+
+            public void Dispose()
+            {
+                Flags.Dispose();
+            }
+
+            public int LastGroup()
+            {
+                for (int i = Flags.Length-5; i >= 0; i-=4)
+                {
+                    if (Flags.TestAny(i, 4)) return i>>2;
+                }
+                return 0;
+            }
+        }
 
         public unsafe struct Merger
         {
             public Transform UnitParticle;
+            public ulong NewValue;
+            public DNA.Position CurrentTarget;
+            public byte GroupIndex => CurrentTarget.GroupIndex;
+            public byte InnerGroupIndex => CurrentTarget.InnerGroupIndex;
+            public int TargetParticleIndex => CurrentTarget.TargetParticleIndex;
             
-            public byte GroupIndex;
-            public byte InnerGroupIndex;
-            public int TargetParticleIndex => (GroupIndex<<2)+InnerGroupIndex;
-            
-            public int ChangeCount;
             public float T;
             public const float Lifespan = 0.2f;
         
-            public static Merger NewParticle(Transform transform, int changeCount)
+            public static Merger NewParticle(Transform transform, ulong newValue)
             {
                 return new Merger()
                 {
                     UnitParticle = transform,
-                    ChangeCount = changeCount
-                };
-            }
-            
-            public static Merger RemoveParticle(Transform transform, int changeCount)
-            {
-                return new Merger()
-                {
-                    UnitParticle = transform,
-                    ChangeCount = changeCount
+                    NewValue = newValue,
+                    CurrentTarget = new DNA.Position(0, (byte)((newValue-1)&3))
                 };
             }
 
-            public static Merger MoveParticle(Transform transform, byte groupIndex, byte offset, bool write)
+            public Merger Advance()
             {
-                return new Merger()
-                {
-                    UnitParticle = transform,
-                    ChangeCount = write ? 1 : 0,
-                    GroupIndex = groupIndex,
-                    InnerGroupIndex = offset
-                };
+                var advance = this;
+                // Weird stuff going on here.
+                // - We do "NewValue-1" because if we represent '16' and read bits '010000' then we'll advance forward in these group orders: 00->00->01
+                // - Instead, by using '16-1==15' we get these bits '001111' meaning we'll advance forward in these groups: 11->11->00
+                // As you can see this better represents the movement that we want this particle to follow
+                advance.CurrentTarget = new DNA.Position((byte)(GroupIndex+1), (byte)(((NewValue-1)>>((GroupIndex+1)<<1))&3));
+                advance.T = 0;
+                return advance;
+            }
+            public Merger CreateFake()
+            {
+                var fake = this;
+                fake.NewValue = 0;
+                fake.T = 0;
+                return fake;
             }
         }
 
-        public void ApplyChange(Change change)
+        public void ApplyChange(ref ulong countup, Change change)
         {
             if (change.Value > 0)
             {
-                Mergers.Add(Merger.NewParticle(change.Transform, change.Value));
+                for (int i = 0; i < change.Value; i++)
+                {
+                    countup++;
+                    Mergers.Add(Merger.NewParticle(change.Transform, countup));
+                }
             }
             else if (change.Value < 0)
             {
-                Mergers.Add(Merger.RemoveParticle(change.Transform, -change.Value));
+                // TODO: Add 'sync points'
             }
         }
         
@@ -195,31 +233,39 @@ public struct DNA : IComponentData
                 
                 if (merger.T >= Merger.Lifespan)
                 {
-                    if (merger.ChangeCount > 0)
+                    if (merger.NewValue == 0)
                     {
-                        if (merger.InnerGroupIndex == 3)
-                        {
-                            // We completed a set
-                            Mergers.Add(Merger.MoveParticle(merger.UnitParticle, (byte)(merger.GroupIndex+1), 0, true));
-                            Mergers.Add(Merger.MoveParticle(zero.Offset(GetOffset(zero, 0)*dnaSpacing), (byte)(merger.GroupIndex+1), 0, false));
-                            Mergers.Add(Merger.MoveParticle(zero.Offset(GetOffset(zero, 1)*dnaSpacing), (byte)(merger.GroupIndex+1), 0, false));
-                            Mergers.Add(Merger.MoveParticle(zero.Offset(GetOffset(zero, 2)*dnaSpacing), (byte)(merger.GroupIndex+1), 0, false));
-                            //Particles[merger.TargetParticleIndex] = false;
-                            Particles[merger.TargetParticleIndex-1] = false;
-                            Particles[merger.TargetParticleIndex-2] = false;
-                            Particles[merger.TargetParticleIndex-3] = false;
-                        }
-                        else
-                        if (!Particles[merger.TargetParticleIndex])
-                        {
-                            Particles[merger.TargetParticleIndex] = true;
-                        }
-                        else
-                        {
-                            // Push this particle to the next index
-                            Mergers.Add(Merger.MoveParticle(merger.UnitParticle, (byte)(merger.GroupIndex), (byte)(merger.InnerGroupIndex+1), true));
-                        }
+                        // Fake used for animations
                     }
+                    else if (merger.CurrentTarget.InnerGroupIndex == 3)
+                    {
+                        // We completed a set. Move all the inners to the empty slot in the thing ahead
+                        var targetInnerIndex = Particles.GetEmptyIndexIngroup(merger.GroupIndex+1);
+                        // Use the merger as the 'animation source'
+                        var adv = merger.Advance();
+                        Mergers.Add(adv);
+                        // Create 3 fake ones at the expected positions
+                        var fake = adv.CreateFake();
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 0)*dnaSpacing); Mergers.Add(fake);
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 1)*dnaSpacing); Mergers.Add(fake);
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 2)*dnaSpacing); Mergers.Add(fake);
+                        // Disable particles
+                        Particles[merger.TargetParticleIndex] = false;
+                        Particles[merger.TargetParticleIndex-1] = false;
+                        Particles[merger.TargetParticleIndex-2] = false;
+                        Particles[merger.TargetParticleIndex-3] = false;
+                    }
+                    else if (!Particles[merger.TargetParticleIndex])
+                    {
+                        Particles[merger.TargetParticleIndex] = true;
+                    }
+                    else
+                    {
+                        // Shouldn't need this anymore...
+                        //// Push this particle to the next index
+                        //Mergers.Add(Merger.MoveParticle(merger.UnitParticle, (byte)(merger.GroupIndex), (byte)(merger.InnerGroupIndex+1), true));
+                    }
+                    
                     Mergers.RemoveAt(i);
                     i--;
                 }
@@ -237,5 +283,14 @@ public struct DNA : IComponentData
         public static float GetDnaGroupScale(Collider c) => c.Radius/2;
         public static float GetDnaScale(Collider c) => c.Radius/5;
         public static float GetDnaSpacing(Collider c) => c.Radius/10;
+    }
+
+    public void Add(ulong change)
+    {
+        Value += change;
+    }
+    public void Subtract(ulong change)
+    {
+        Value = Value - change;
     }
 }

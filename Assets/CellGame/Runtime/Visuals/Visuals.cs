@@ -36,6 +36,7 @@ public partial struct Visuals : ISystem
         {
             Zero = m_PlayerTransformQuery.GetSingleton<Transform>(),
             ZeroCollider = m_PlayerTransformQuery.GetSingleton<Collider>(),
+            Dna = SystemAPI.GetSingleton<DNA>(),
             AnimData = SystemAPI.GetSingleton<DNA.AnimData>(),
             
             dt = SystemAPI.Time.DeltaTime,
@@ -71,6 +72,7 @@ public partial struct Visuals : ISystem
     {
         [ReadOnly] public Transform Zero;
         [ReadOnly] public Collider ZeroCollider;
+        [ReadOnly] public DNA Dna;
         [ReadOnly] public DNA.AnimData AnimData;
         
         [ReadOnly] public float dt;
@@ -85,7 +87,10 @@ public partial struct Visuals : ISystem
             var groups = AnimData.Groups;
             var particles = AnimData.Particles;
             var mergers = AnimData.Mergers;
-            for (int i = 0; i < groups.Length; i++)
+            
+            var lastGroup = math.max((1 + 64 - math.lzcnt(Dna.Value)) / 2, 1);;
+            
+            for (int i = 0; i < groups.Length && i < lastGroup; i++)
             {
                 var group = groups[i];
                 var p = float3(group.Position,0);
