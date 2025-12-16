@@ -70,7 +70,7 @@ public struct DNA : IComponentData
                 var data = 
                     new AnimData
                     {
-                        Groups  = new NativeArray<Transform>(256, Allocator.Persistent),
+                        Groups  = new NativeArray<Transform>(ParticleBitFlags.GroupCount, Allocator.Persistent),
                         Particles = new ParticleBitFlags(),
                         Mergers = new NativeList<Merger>(256, Allocator.Persistent)
                     };
@@ -105,10 +105,10 @@ public struct DNA : IComponentData
         {
             // Each ulong is 64 bits, each group is 4 bits. IE: a ulong contains 16 groups.
             // We need 256*4 bits to represent the 256*4 potential particles that will be displayed
-            public const int GroupsPerFlag = 64/4;
-            public const int FlagArrayLength = 16;
-            fixed ulong _flags[FlagArrayLength];
-            public int Length => FlagArrayLength*64;
+            public const int GroupCount = 32;
+            public const int FlagArrayLength = GroupCount*4;
+            fixed bool _flags[FlagArrayLength];
+            public int Length => FlagArrayLength;
             
             public bool this[int index]
             {
@@ -119,60 +119,35 @@ public struct DNA : IComponentData
             {
                 get
                 {
-                    fixed (ulong* ptr = _flags)
-                    {
-                        // index is: ..ggggii
-                        var group = ptr + ((index>>2)>>4);
-                        var inner = index & 63;
-                        return Bitwise.IsSet(group,(int)inner);
-                    }
+                    return _flags[index];
                 }
                 set
                 {
-                    // index is: ..ggggii
-                    var group = (index>>6);
-                    var inner = index & 63;
-                    _flags[group] = Bitwise.SetBits(_flags[group], (int)inner, 1, value);
+                    _flags[index] = value;
                 }
             }
 
             private static ParticleBitFlags CreateFromValue(ulong value)
             {
                 ParticleBitFlags flags = new();
-                for (uint flagIndex = 0; flagIndex < FlagArrayLength; flagIndex++)
+                for (int groupIndex = 0; groupIndex < GroupCount; groupIndex++)
                 {
-                    for (uint groupIndex = 0; groupIndex < GroupsPerFlag; groupIndex++)
-                    {
-                        var index = (flagIndex<<6) | (groupIndex << 2);
-                        var set = ((value >> (int)(flagIndex*8)) >> (int)(groupIndex*2)) & 3;
-                        flags[index] = set > 0;
-                        flags[index+1] = set > 1;
-                        flags[index+2] = set > 2;
-                    }
+                    var index = groupIndex*4;
+                    var set = ((value>>groupIndex)>>groupIndex)&3;
+                    flags[index] = set > 0;
+                    flags[index+1] = set > 1;
+                    flags[index+2] = set > 2;
                 }
                 return flags;
             }
 
             public byte GetEmptyIndexIngroup(int groupIndex)
             {
-                var index = groupIndex<<2;
+                var index = groupIndex*4;
                 if (!this[index]) return 0;
                 if (!this[index + 1]) return 1;
                 if (!this[index + 2]) return 2;
                 return 3;
-            }
-
-            public DNA.Position GetConsumedParticle(ulong particleValue)
-            {
-                int lastGroup = math.max((1 + 64 - math.lzcnt(particleValue)) / 2, 1);
-                for (int i = lastGroup; i<<2 < Length; i++)
-                {
-                    var index = GetEmptyIndexIngroup(i);
-                    if (index == 0) continue;
-                    
-                    return new DNA.Position((byte)i, index);
-                }
-                return default;
             }
 
             /// <summary>
@@ -187,12 +162,12 @@ public struct DNA : IComponentData
             public void Subtract(ulong removed, out ParticleBitFlags disabled, out ParticleBitFlags targets, out Position particleTaken)
             {
                 ulong value = 0;
-                for (int group = 0; group < Length>>2; group++)
+                for (int groupIndex = 0; groupIndex < GroupCount; groupIndex++)
                 {
-                    if (this[(group<<2)+0]) value += (1ul<<group*2);
-                    if (this[(group<<2)+1]) value += (1ul<<group*2);
-                    if (this[(group<<2)+2]) value += (1ul<<group*2);
-                    //if (Flags.IsSet((group<<2)+3)) value += (1ul<<group)*1;
+                    var index = groupIndex*4;
+                    if (this[index])    value += (1ul<<groupIndex)<<groupIndex;
+                    if (this[index+1])  value += (1ul<<groupIndex)<<groupIndex;
+                    if (this[index+2])  value += (1ul<<groupIndex)<<groupIndex;
                 }
                 value -= removed;
                 ParticleBitFlags result = ParticleBitFlags.CreateFromValue(value);
