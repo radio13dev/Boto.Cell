@@ -1,4 +1,3 @@
-using System;
 using System.Collections;
 using System.Linq;
 using Drawing;
@@ -22,6 +21,7 @@ public class Shop : MonoBehaviour
     
     EntityQuery m_ShopQuery;
     EntityQuery m_DnaQuery;
+    EntityQuery m_DnaChangeQuery;
     public ShopRow DrillTierRow;
     
 
@@ -30,7 +30,8 @@ public class Shop : MonoBehaviour
         Instance = this;
         ClosedTransform.Apply((RectTransform)transform);
         m_ShopQuery = World.DefaultGameObjectInjectionWorld.EntityManager.CreateEntityQuery(typeof(ShopData));
-        //m_DnaQuery = World.DefaultGameObjectInjectionWorld.EntityManager.CreateEntityQuery(typeof(DNA), typeof(DNA.Group), typeof(DNA.Particle), typeof(DNA.Merger));
+        m_DnaQuery = World.DefaultGameObjectInjectionWorld.EntityManager.CreateEntityQuery(typeof(DNA));
+        m_DnaChangeQuery = World.DefaultGameObjectInjectionWorld.EntityManager.CreateEntityQuery(typeof(DNA.Changes));
     }
 
     public void Toggle()
@@ -55,63 +56,25 @@ public class Shop : MonoBehaviour
         int drillCost = 1 + shopData.DrillTier;
         DrillTierRow.Setup(default, shopData.DrillTier, drillCost,  "Drill tier", () =>
         {
-            //var entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-            //// Consume the cost from any sources
-            //using var dnas = m_DnaQuery.ToComponentDataArray<DNA>(Allocator.Temp);
-            //using var entities = m_DnaQuery.ToEntityArray(Allocator.Temp);
-            //
-            //ulong leftToDrain = (ulong)4 << (drillCost-1);
-            //ulong has = 0;
-            //for (int i = 0; i < dnas.Length; i++)
-            //{
-            //    has += dnas[i].Value;
-            //    if (has >= leftToDrain) break;
-            //}
-            //if (has < leftToDrain) return;
-            //
-            //shopData.DrillTier++;
-            //m_ShopQuery.SetSingleton(shopData);
-            //
-            //for (int i = 0; i < dnas.Length; i++)
-            //{
-            //    if (dnas[i].Value <= 0) continue;
-            //    
-            //    var taken = math.min(dnas[i].Value, leftToDrain);
-            //    if (taken == 0) continue;
-            //    
-            //    
-            //    var left = dnas[i].Value - taken;
-            //    entityManager.SetComponentData<DNA>(entities[i], new DNA(){ Value = left });
-            //    
-            //    // Fix up visuals
-            //    var groups = entityManager.GetBuffer<DNA.Group>(entities[i]);
-            //    var particles = entityManager.GetBuffer<DNA.Particle>(entities[i]);
-            //    var mergers = entityManager.GetBuffer<DNA.Merger>(entities[i]);
-            //    
-            //    // Complete all mergers
-            //    while (mergers.Length > 0)
-            //    {
-            //        Virus_InputSystem.Job.CompleteMerger(ref mergers, ref particles, ref mergers.ElementAt(0), default, default);
-            //        mergers.RemoveAt(0);
-            //    }
-            //    
-            //    // Reduce group count
-            //    var availableGroups = math.max((1 + 64 - math.lzcnt(left)) / 2, 1);
-            //    while (groups.Length > availableGroups)
-            //        groups.RemoveAt(groups.Length - 1);
-            //    
-            //    // Only show particles and groups that are left
-            //    for (int groupIndex = 0; (groupIndex << 2) < particles.Length; groupIndex++)
-            //    {
-            //        for (int offset = 0; offset < 3; offset++)
-            //        {
-            //            particles.ElementAt(offset + (groupIndex << 2)).Active = ((left >> (groupIndex*2)) & 3) > (uint)offset;
-            //        }
-            //    }
-            //}
+            ulong totalCost = (ulong)2<<drillCost;
             
-            Refresh();
+            var entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
+            var dna = m_DnaQuery.GetSingleton<DNA>();
+            Debug.Log($"Attemptign to pay {totalCost} of {dna.Value}");
+            if (totalCost > dna.Value) return;
             
+            var changes = m_DnaChangeQuery.GetSingleton<DNA.Changes>();
+            changes.Data.Add(new DNA.Change(default, -(long)totalCost));
+            m_DnaChangeQuery.SetSingleton(changes);
+            
+            dna.Subtract(totalCost);
+            m_DnaQuery.SetSingleton(dna);
+            
+            shopData.DrillTier++;
+            m_ShopQuery.SetSingleton(shopData);
+            
+            // Refresh should be triggered by money update
+            // Refresh();
         });
     }
 }

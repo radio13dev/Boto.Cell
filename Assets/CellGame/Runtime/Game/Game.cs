@@ -250,7 +250,8 @@ public partial struct DnaChangesProcessSystem : ISystem
             if (m_PlayerTransformQuery.TryGetSingleton(out Transform playerT) && m_PlayerTransformQuery.TryGetSingleton(out Collider playerC))
             {
                 animations.UpdateGroups(SystemAPI.Time.DeltaTime, playerT, playerC);
-                animations.UpdateMergers(SystemAPI.Time.DeltaTime, playerT, playerC);
+                var r = Random.CreateFromIndex(1);
+                animations.UpdateMergers(ref r, SystemAPI.Time.DeltaTime, playerT, playerC);
             }
         }
         dna.Add((ulong)addCount*(ulong)(shopData.DrillTier+1));

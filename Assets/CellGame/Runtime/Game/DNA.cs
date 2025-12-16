@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Diagnostics.Contracts;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Mathematics;
+using Random = Unity.Mathematics.Random;
 
 public struct DNA : IComponentData
 {
@@ -29,9 +31,9 @@ public struct DNA : IComponentData
     public readonly struct Change
     {
         public readonly Transform Transform;
-        public readonly int Value;
+        public readonly long Value;
 
-        public Change(Transform transform, int v)
+        public Change(Transform transform, long v)
         {
             this.Transform = transform;
             this.Value = v;
@@ -51,6 +53,12 @@ public struct DNA : IComponentData
         }
 
         public int TargetParticleIndex => (GroupIndex<<2)+InnerGroupIndex;
+        public ulong ParticleValue => (ulong)InnerGroupIndex*(ulong)((ulong)2<<(GroupIndex));
+
+        public static Position CreateFromParticleIndex(int index)
+        {
+            return new Position((byte)(index>>2), (byte)(index&3));
+        }
     }
 
     public struct AnimData : IComponentData, IDisposable
@@ -63,7 +71,7 @@ public struct DNA : IComponentData
                     new AnimData
                     {
                         Groups  = new NativeArray<Transform>(256, Allocator.Persistent),
-                        Particles = new ParticleBitFlags(256*4),
+                        Particles = new ParticleBitFlags(),
                         Mergers = new NativeList<Merger>(256, Allocator.Persistent)
                     };
                     for (int i = 0; i < data.Groups.Length; i++)
@@ -90,52 +98,126 @@ public struct DNA : IComponentData
         public void Dispose()
         {
             Groups.Dispose();
-            Particles.Dispose();
             Mergers.Dispose();
         }
         
-        public struct ParticleBitFlags : IDisposable
+        public unsafe struct ParticleBitFlags
         {
-            NativeBitArray Flags;
-            
-            public ParticleBitFlags(int length)
-            {
-                Flags = new NativeBitArray(length, Allocator.Persistent, NativeArrayOptions.ClearMemory);
-            }
+            // Each ulong is 64 bits, each group is 4 bits. IE: a ulong contains 16 groups.
+            // We need 256*4 bits to represent the 256*4 potential particles that will be displayed
+            public const int GroupsPerFlag = 64/4;
+            public const int FlagArrayLength = 16;
+            fixed ulong _flags[FlagArrayLength];
+            public int Length => FlagArrayLength*64;
             
             public bool this[int index]
             {
+                get => this[(uint)index];
+                set => this[(uint)index] = value;
+            }
+            public bool this[uint index]
+            {
                 get
                 {
-                    return Flags.IsSet(index);
+                    fixed (ulong* ptr = _flags)
+                    {
+                        // index is: ..ggggii
+                        var group = ptr + ((index>>2)>>4);
+                        var inner = index & 63;
+                        return Bitwise.IsSet(group,(int)inner);
+                    }
                 }
                 set
                 {
-                    Flags.Set(index, value);
+                    // index is: ..ggggii
+                    var group = (index>>6);
+                    var inner = index & 63;
+                    _flags[group] = Bitwise.SetBits(_flags[group], (int)inner, 1, value);
                 }
+            }
+
+            private static ParticleBitFlags CreateFromValue(ulong value)
+            {
+                ParticleBitFlags flags = new();
+                for (uint flagIndex = 0; flagIndex < FlagArrayLength; flagIndex++)
+                {
+                    for (uint groupIndex = 0; groupIndex < GroupsPerFlag; groupIndex++)
+                    {
+                        var index = (flagIndex<<6) | (groupIndex << 2);
+                        var set = ((value >> (int)(flagIndex*8)) >> (int)(groupIndex*2)) & 3;
+                        flags[index] = set > 0;
+                        flags[index+1] = set > 1;
+                        flags[index+2] = set > 2;
+                    }
+                }
+                return flags;
             }
 
             public byte GetEmptyIndexIngroup(int groupIndex)
             {
-                var zero = groupIndex << 2;
-                if (this[zero]) return 0;
-                if (this[zero + 1]) return 1;
-                if (this[zero + 2]) return 2;
+                var index = groupIndex<<2;
+                if (!this[index]) return 0;
+                if (!this[index + 1]) return 1;
+                if (!this[index + 2]) return 2;
                 return 3;
             }
 
-            public void Dispose()
+            public DNA.Position GetConsumedParticle(ulong particleValue)
             {
-                Flags.Dispose();
+                int lastGroup = math.max((1 + 64 - math.lzcnt(particleValue)) / 2, 1);
+                for (int i = lastGroup; i<<2 < Length; i++)
+                {
+                    var index = GetEmptyIndexIngroup(i);
+                    if (index == 0) continue;
+                    
+                    return new DNA.Position((byte)i, index);
+                }
+                return default;
             }
 
-            public int LastGroup()
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="removed"></param>
+            /// <param name="disabled">Includes the 'particleTaken' flag</param>
+            /// <param name="targets"></param>
+            /// <param name="particleTaken"></param>
+            /// <exception cref="NotImplementedException"></exception>
+            [Pure]
+            public void Subtract(ulong removed, out ParticleBitFlags disabled, out ParticleBitFlags targets, out Position particleTaken)
             {
-                for (int i = Flags.Length-5; i >= 0; i-=4)
+                ulong value = 0;
+                for (int group = 0; group < Length>>2; group++)
                 {
-                    if (Flags.TestAny(i, 4)) return i>>2;
+                    if (this[(group<<2)+0]) value += (1ul<<group*2);
+                    if (this[(group<<2)+1]) value += (1ul<<group*2);
+                    if (this[(group<<2)+2]) value += (1ul<<group*2);
+                    //if (Flags.IsSet((group<<2)+3)) value += (1ul<<group)*1;
                 }
-                return 0;
+                value -= removed;
+                ParticleBitFlags result = ParticleBitFlags.CreateFromValue(value);
+                
+                GetDifference(this, result, out disabled, out targets);
+                int consumedParticlePosition;
+                for (consumedParticlePosition = disabled.Length-1; consumedParticlePosition >= 0; consumedParticlePosition--)
+                {
+                    if (disabled[consumedParticlePosition]) break;
+                }
+                particleTaken = Position.CreateFromParticleIndex(consumedParticlePosition);
+            }
+
+            public static void GetDifference(ParticleBitFlags a, ParticleBitFlags b, out ParticleBitFlags disabled, out ParticleBitFlags enabled)
+            {
+                disabled = new();
+                for (int i = 0; i < disabled.Length; i++)
+                {
+                    disabled[i] = a[i] && !b[i];
+                    
+                }
+                
+                enabled = new();
+                for (int i = 0; i < enabled.Length; i++)
+                    enabled[i] = !a[i] && b[i];
             }
         }
 
@@ -144,12 +226,15 @@ public struct DNA : IComponentData
             public Transform UnitParticle;
             public ulong NewValue;
             public DNA.Position CurrentTarget;
+            public bool RemoveFlag;
+            
             public byte GroupIndex => CurrentTarget.GroupIndex;
             public byte InnerGroupIndex => CurrentTarget.InnerGroupIndex;
             public int TargetParticleIndex => CurrentTarget.TargetParticleIndex;
             
             public float T;
             public const float Lifespan = 0.2f;
+            public const ulong SyncPointFlag = ulong.MaxValue;
         
             public static Merger NewParticle(Transform transform, ulong newValue)
             {
@@ -179,6 +264,25 @@ public struct DNA : IComponentData
                 fake.T = 0;
                 return fake;
             }
+
+            // A SyncPoint lets all ongoing animations end, and forces all ongoing animations to insert new Mergers 'before' it.
+            public static Merger SyncPoint()
+            {
+                return new Merger()
+                {
+                    NewValue = SyncPointFlag
+                };
+            }
+
+            public static Merger RemoveParticles(Transform changeTransform, uint removed)
+            {
+                return new Merger()
+                {
+                    UnitParticle = changeTransform,
+                    RemoveFlag = true,
+                    NewValue = removed
+                };
+            }
         }
 
         public void ApplyChange(ref ulong countup, Change change)
@@ -194,6 +298,9 @@ public struct DNA : IComponentData
             else if (change.Value < 0)
             {
                 // TODO: Add 'sync points'
+                Mergers.Add(Merger.SyncPoint());
+                Mergers.Add(Merger.RemoveParticles(change.Transform, (uint)(-change.Value)));
+                Mergers.Add(Merger.SyncPoint());
             }
         }
         
@@ -219,13 +326,43 @@ public struct DNA : IComponentData
             }
         }
         
-        public void UpdateMergers(float dt, Transform transform, Collider collider)
+        public void UpdateMergers(ref Random random, float dt, Transform transform, Collider collider)
         {
+            // Find any sync points
+            int syncPointEndOffset = 0;
+            for (int i = 0; i < Mergers.Length; i++)
+            {
+                if (Mergers[i].NewValue == Merger.SyncPointFlag)
+                {
+                    syncPointEndOffset = Mergers.Length - i;
+                    break;
+                }
+            }
+            
             for (int i = 0; i < Mergers.Length; i++)
             {
                 ref var merger = ref Mergers.ElementAt(i);
+                if (merger.NewValue == Merger.SyncPointFlag)
+                {
+                    if (i == 0)
+                    {
+                        // Delete SyncPoints that are at the start of the list
+                        Mergers.RemoveAt(i);
+                        i--;
+                    }
+                    continue;
+                }
+                
+                if (i > Mergers.Length-syncPointEndOffset)
+                {
+                    // Time paused, move randomly (todo)
+                    merger.UnitParticle.Position += random.NextFloat2(-1f*dt, 1f*dt);
+                    continue;
+                }
+                
                 merger.T += dt;
                 merger.T = math.clamp(merger.T, 0, Merger.Lifespan);
+                
                 
                 var zero = Groups[merger.GroupIndex];
                 var dnaSpacing = DNA.AnimData.GetDnaSpacing(collider);
@@ -237,18 +374,43 @@ public struct DNA : IComponentData
                     {
                         // Fake used for animations
                     }
+                    else if (merger.RemoveFlag)
+                    {
+                        // Determine the difference between what we have, and what we should have. Animate accordingly.
+                        Particles.Subtract(merger.NewValue, out ParticleBitFlags disabled, out ParticleBitFlags targets, out Position particleTaken);
+                        for (int flagIndex = 0; flagIndex < disabled.Length; flagIndex++)
+                            if (disabled[flagIndex]) Particles[flagIndex] = false;
+                        
+                        var takenZero = Groups[particleTaken.GroupIndex];
+                        takenZero = takenZero.Offset(GetOffset(takenZero, particleTaken.InnerGroupIndex));
+                        for (int flagIndex = 0; flagIndex < targets.Length; flagIndex++)
+                        {
+                            if (targets[flagIndex])
+                            {
+                                Mergers.InsertRangeWithBeginEnd(Mergers.Length-syncPointEndOffset, Mergers.Length-syncPointEndOffset+1);
+                                Mergers[Mergers.Length-syncPointEndOffset-1] = new Merger()
+                                {
+                                    UnitParticle = takenZero,
+                                    CurrentTarget = Position.CreateFromParticleIndex(flagIndex),
+                                    NewValue = 1 // Should enable it... hopefully...
+                                };
+                            }
+                        }
+                        
+                    }
                     else if (merger.CurrentTarget.InnerGroupIndex == 3)
                     {
                         // We completed a set. Move all the inners to the empty slot in the thing ahead
-                        var targetInnerIndex = Particles.GetEmptyIndexIngroup(merger.GroupIndex+1);
                         // Use the merger as the 'animation source'
                         var adv = merger.Advance();
-                        Mergers.Add(adv);
-                        // Create 3 fake ones at the expected positions
-                        var fake = adv.CreateFake();
-                        fake.UnitParticle = zero.Offset(GetOffset(zero, 0)*dnaSpacing); Mergers.Add(fake);
-                        fake.UnitParticle = zero.Offset(GetOffset(zero, 1)*dnaSpacing); Mergers.Add(fake);
-                        fake.UnitParticle = zero.Offset(GetOffset(zero, 2)*dnaSpacing); Mergers.Add(fake);
+                        var fake = adv.CreateFake(); // Create 3 fake ones at the expected positions
+                        
+                        Mergers.InsertRangeWithBeginEnd(Mergers.Length-syncPointEndOffset, Mergers.Length-syncPointEndOffset+4);
+                        Mergers[Mergers.Length-syncPointEndOffset-4] = adv;
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 0)*dnaSpacing); Mergers[Mergers.Length-syncPointEndOffset-3] = fake;
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 1)*dnaSpacing); Mergers[Mergers.Length-syncPointEndOffset-2] = fake;
+                        fake.UnitParticle = zero.Offset(GetOffset(zero, 2)*dnaSpacing); Mergers[Mergers.Length-syncPointEndOffset-1] = fake;
+                        
                         // Disable particles
                         Particles[merger.TargetParticleIndex] = false;
                         Particles[merger.TargetParticleIndex-1] = false;
