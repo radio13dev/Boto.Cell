@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <link rel="shortcut icon" href="TemplateData/favicon.ico">
+  <link rel="stylesheet" href="TemplateData/style.css">
+</head>
+
+<body class="{{{ SPLASH_SCREEN_STYLE.toLowerCase() }}}">
+  <!-- Read URL params at startup -->
+  <script>
+    // We'll store the Unity instance in a global variable so we can access it later.
+    var unityInstance = null;
+
+    // This function can be called from Unity (via ExternalCall) to request the token.
+    function SendWebGPUStatusToUnity() {
+      // Check if WebGPU is available
+      if ('gpu' in navigator) {
+        console.log("WebGPU is available.");
+        unityInstance.SendMessage("JavascriptHook", "WebGPUStatus", true);
+      } else {
+        console.log("WebGPU is not available on this browser.");
+      }
+    }
+  </script>
+  <div id="unity-container" class="unity-desktop">
+    <canvas id="unity-canvas" tabindex="0"></canvas>
+  </div>
+  <div id="loading-cover" style="display:none;">
+    <div id="unity-loading-bar">
+      <div id="unity-logo"><img src="logo.png"></div>
+      <div id="unity-progress-bar-empty" style="display: none;">
+        <div id="unity-progress-bar-full"></div>
+      </div>
+      <div class="spinner"></div>
+    </div>
+  </div>
+  <div id="unity-fullscreen-button" style="display: none;"></div>
+  <script>
+    const hideFullScreenButton = "{{{ HIDE_FULL_SCREEN_BUTTON }}}";
+    const buildUrl = "Build";
+    const loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
+    const config = {
+      dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+      frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+      codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+      #if MEMORY_FILENAME
+        memoryUrl: buildUrl + "/{{{ MEMORY_FILENAME }}}",
+      #endif
+  #if SYMBOLS_FILENAME
+        symbolsUrl: buildUrl + "/{{{ SYMBOLS_FILENAME }}}",
+      #endif
+        streamingAssetsUrl: "StreamingAssets",
+      companyName: "{{{ COMPANY_NAME }}}",
+      productName: "{{{ PRODUCT_NAME }}}",
+      productVersion: "{{{ PRODUCT_VERSION }}}",
+      preserveDrawingBuffer: true,
+    };
+
+    const container = document.querySelector("#unity-container");
+    const canvas = document.querySelector("#unity-canvas");
+    const loadingCover = document.querySelector("#loading-cover");
+    const progressBarEmpty = document.querySelector("#unity-progress-bar-empty");
+    const progressBarFull = document.querySelector("#unity-progress-bar-full");
+    const fullscreenButton = document.querySelector("#unity-fullscreen-button");
+    const spinner = document.querySelector('.spinner');
+
+    const canFullscreen = (function () {
+      for (const key of [
+        'exitFullscreen',
+        'webkitExitFullscreen',
+        'webkitCancelFullScreen',
+        'mozCancelFullScreen',
+        'msExitFullscreen',
+      ]) {
+        if (key in document) {
+          return true;
+        }
+      }
+      return false;
+    }());
+
+    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      container.className = "unity-mobile";
+      config.devicePixelRatio = window.devicePixelRatio; // Changed from 1
+    }
+    #if BACKGROUND_FILENAME
+    canvas.style.background = "url('" + buildUrl + "/{{{ BACKGROUND_FILENAME.replace(/'/g, '%27') }}}') center / cover";
+    #endif
+    loadingCover.style.display = "";
+
+    const script = document.createElement("script");
+    script.src = loaderUrl;
+    script.onload = () => {
+      createUnityInstance(canvas, config, (progress) => {
+        spinner.style.display = "none";
+        progressBarEmpty.style.display = "";
+        progressBarFull.style.width = `${100 * progress}%`;
+      }).then((instance) => {
+        unityInstance = instance; // store the instance globally
+
+        loadingCover.style.display = "none";
+        if (canFullscreen) {
+          if (!hideFullScreenButton) {
+            fullscreenButton.style.display = "";
+          }
+          fullscreenButton.onclick = () => {
+            unityInstance.SetFullscreen(1);
+          };
+        }
+
+        // Parse URL parameters and get the token
+        const urlParams = new URLSearchParams(window.location.search);
+        const tokenParam = urlParams.get('lobby');
+        if (tokenParam) {
+          console.log("Token param found:", tokenParam);
+          unityInstance.SendMessage("JavascriptHook", "JoinLobby", tokenParam);
+        } else {
+          console.log("No token param provided.");
+        }
+
+        // When the user clicks on the canvas, it will receive focus
+        canvas.addEventListener("focus", function () {
+          // e.g., send a message to Unity to unpause
+          unityInstance.SendMessage("JavascriptHook", "SetFocused", 1);
+        });
+
+        // When the canvas loses focus (e.g., clicking elsewhere, pressing tab, etc.)
+        canvas.addEventListener("blur", function () {
+          // e.g., send a message to Unity to pause
+          unityInstance.SendMessage("JavascriptHook", "SetFocused", 0);
+        });
+
+        // We need these here just for iOS Safari, which handles "focus" and "blur" differently
+        canvas.addEventListener("touchstart", function () {
+          unityInstance.SendMessage("JavascriptHook", "SetFocused", 1);
+        });
+
+      }).catch((message) => {
+        alert(message);
+      });
+    };
+    document.body.appendChild(script);
+  </script>
+</body>
+
+</html>
