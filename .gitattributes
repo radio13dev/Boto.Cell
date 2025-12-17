@@ -252,3 +252,7 @@ To[[:space:]]include[[:space:]]this,[[:space:]]run[[:space:]]`cat[[:space:]].git
 *.ecelp7470 filter=lfs diff=lfs merge=lfs -text
 *.kra filter=lfs diff=lfs merge=lfs -text
 *.krat filter=lfs diff=lfs merge=lfs -text
+
+# Force LF (Unix) endings for all shell scripts, even on Windows
+*.sh eol=lf
+Commands/build.config eol=lf
