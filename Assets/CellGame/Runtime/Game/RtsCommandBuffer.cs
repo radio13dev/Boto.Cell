@@ -105,7 +105,7 @@ public readonly struct RtsCommandBuffer : IBufferElementData
     }
 }
 
-[UpdateBefore(typeof(InputSystem))]
+[UpdateBefore(typeof(InputSystem2))]
 public partial struct RtsInputProcessSystem : ISystem
 {
     public void OnUpdate(ref SystemState state)

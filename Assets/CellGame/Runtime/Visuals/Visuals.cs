@@ -5,7 +5,6 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Transforms;
 using UnityEngine;
-using UnityEngine.InputSystem;
 using static Unity.Mathematics.math;
 using float2 = Unity.Mathematics.float2;
 using float3 = Unity.Mathematics.float3;
@@ -148,7 +147,7 @@ public partial struct Visuals : ISystem
     }
 }
 
-public partial struct PlayerControlSystem : ISystem
+public partial class PlayerControlSystem : SystemBase
 {
     EntityQuery m_PlayerQuery;
     NativeHashSet<Entity> m_Selected;
@@ -169,22 +168,30 @@ public partial struct PlayerControlSystem : ISystem
     float2 m_RtsCameraTargetPos;
     float m_RtsCameraTargetZoom;
     
-    public void OnCreate(ref SystemState state)
+    InputSystem_Actions m_InputSystem;
+    Vector2 m_lastMousePos;
+
+    protected override void OnCreate()
     {
         m_PlayerQuery = SystemAPI.QueryBuilder().WithAll<Input, Player, Transform>().Build();
         m_Selected = new NativeHashSet<Entity>(1024, Allocator.Persistent);
         m_Zoom = 10;
+        
+        m_InputSystem = new InputSystem_Actions();
+        m_InputSystem.Enable();
     }
 
-    public void OnDestroy(ref SystemState state)
+    protected override void OnDestroy()
     {
+        m_InputSystem.Dispose();
         m_Selected.Dispose();
     }
 
-    public void OnUpdate(ref SystemState state)
+    protected override void OnUpdate()
     {
-        if (Keyboard.current.tabKey.wasPressedThisFrame)
+        if (TabButton.TabToggleRequested)
         {
+            TabButton.TabToggleRequested = false;
             m_IsCameraDragging = false;
             if (m_RtsModeEnabled)
             {
@@ -199,18 +206,19 @@ public partial struct PlayerControlSystem : ISystem
             
             m_RtsModeEnabled = !m_RtsModeEnabled;
         }
-        m_Zoom = math.clamp(m_Zoom - Mouse.current.scroll.y.value*ZoomRate*SystemAPI.Time.DeltaTime*math.sqrt(m_Zoom), 10, 3000);
+        m_Zoom = math.clamp(m_Zoom - m_InputSystem.UI.Zoom.ReadValue<float>()*ZoomRate*SystemAPI.Time.DeltaTime*math.sqrt(m_Zoom), 10, 3000);
     
         var draw = Draw.ingame;
         
-        var mouseWorldPos = ConvertScreenPointToWorldPos(Mouse.current.position.ReadValue());
-        var mouseWorldDelta = mouseWorldPos - ConvertScreenPointToWorldPos(Mouse.current.position.ReadValue() - Mouse.current.delta.ReadValue());
+        var mouseWorldPos = ConvertScreenPointToWorldPos(m_InputSystem.UI.Point.ReadValue<Vector2>());
+        var mouseWorldDelta = mouseWorldPos - ConvertScreenPointToWorldPos(m_lastMousePos);
+        m_lastMousePos = m_InputSystem.UI.Point.ReadValue<Vector2>();
         
         // Setup selection box
         if (m_RtsModeEnabled)
             if (!m_IsDragging)
             {
-                if (Mouse.current.press.wasPressedThisFrame)
+                if (m_InputSystem.UI.Click.WasPressedThisFrame())
                 {
                     m_IsDragging = true;
                     m_DragStartPos = mouseWorldPos;
@@ -218,10 +226,10 @@ public partial struct PlayerControlSystem : ISystem
             }
             else
             {
-                if (!Mouse.current.press.isPressed)
+                if (!m_InputSystem.UI.Click.IsPressed())
                     m_IsDragging = false;
             }
-        if (m_IsDragging && !Keyboard.current.shiftKey.isPressed) m_Selected.Clear();
+        if (m_IsDragging && !m_InputSystem.Player.Sprint.IsPressed()) m_Selected.Clear();
         var selectionBoxCenter = (m_DragStartPos + mouseWorldPos)/2;
         var selectionBoxSize = math.abs(mouseWorldPos - m_DragStartPos);
         var selectionBox = new Rect(selectionBoxCenter-selectionBoxSize/2, selectionBoxSize);
@@ -241,7 +249,7 @@ public partial struct PlayerControlSystem : ISystem
                 bestTransform = transform.ValueRO;
                 bestCollider = collider.ValueRO;
                 
-                if (m_RtsModeEnabled && Mouse.current.press.wasPressedThisFrame)
+                if (m_RtsModeEnabled && m_InputSystem.UI.Click.WasPressedThisFrame())
                     m_Selected.Add(entity);
             }
             
@@ -267,13 +275,13 @@ public partial struct PlayerControlSystem : ISystem
         float2 cameraTargetPos;
         if (!m_RtsModeEnabled)
         {
-            if (bestEntity == playerE && Mouse.current.press.wasReleasedThisFrame)
+            if (bestEntity == playerE && m_InputSystem.UI.Click.WasReleasedThisFrame())
             {
                 Shop.Instance.Toggle();
             }
             
             // Commands are sent to player using rts job 'action' operation
-            if (Mouse.current.leftButton.wasPressedThisFrame || Mouse.current.rightButton.isPressed)
+            if (m_InputSystem.UI.Click.WasPressedThisFrame() || m_InputSystem.UI.RightClick.IsPressed())
                 new RtsPlayerActionJob()
                 {
                     Command = bestEntity == Entity.Null ? RtsCommandBuffer.Move(mouseWorldPos) : RtsCommandBuffer.Interact(bestEntity),
@@ -281,33 +289,17 @@ public partial struct PlayerControlSystem : ISystem
                 }.Schedule();
             
             // Use this middle-click-drag to move the camera around
-            if (Mouse.current.middleButton.isPressed)
+            if (m_InputSystem.UI.MiddleClick.IsPressed() || m_InputSystem.UI.PanTouch.IsPressed())
             {
                 m_FocusedCameraTargetPos -= mouseWorldDelta;
                 m_IsCameraDragging = true;
             }
-
-            if (Keyboard.current.wKey.isPressed)
+    
+    
+            var dir = m_InputSystem.Player.Move.ReadValue<Vector2>();
+            if (dir != Vector2.zero)
             {
-                m_FocusedCameraTargetPos += float2(0, 1) * SystemAPI.Time.DeltaTime * KeyboardPanRate * m_Zoom;
-                m_IsCameraDragging = true;
-            }
-
-            if (Keyboard.current.sKey.isPressed)
-            {
-                m_FocusedCameraTargetPos += float2(0, -1) * SystemAPI.Time.DeltaTime * KeyboardPanRate * m_Zoom;
-                m_IsCameraDragging = true;
-            }
-
-            if (Keyboard.current.dKey.isPressed)
-            {
-                m_FocusedCameraTargetPos += float2(1, 0) * SystemAPI.Time.DeltaTime * KeyboardPanRate * m_Zoom;
-                m_IsCameraDragging = true;
-            }
-
-            if (Keyboard.current.aKey.isPressed)
-            {
-                m_FocusedCameraTargetPos += float2(-1, 0) * SystemAPI.Time.DeltaTime * KeyboardPanRate * m_Zoom;
+                m_FocusedCameraTargetPos += float2(dir) * SystemAPI.Time.DeltaTime * KeyboardPanRate * m_Zoom;
                 m_IsCameraDragging = true;
             }
 
@@ -319,7 +311,7 @@ public partial struct PlayerControlSystem : ISystem
             else
             {
                 // Release 'drag' when we click on empty space
-                if ((Mouse.current.press.wasPressedThisFrame || Mouse.current.rightButton.wasPressedThisFrame) && bestEntity == Entity.Null)
+                if ((m_InputSystem.UI.Click.WasPressedThisFrame() || m_InputSystem.UI.RightClick.WasPressedThisFrame()) && bestEntity == Entity.Null)
                     m_IsCameraDragging = false;
             }
             
@@ -333,27 +325,23 @@ public partial struct PlayerControlSystem : ISystem
                 draw.WireRectangle(float3(selectionBox.center,0), quaternion.Euler(math.PIHALF,0,0), selectionBox.size);
             
             // Use this middle-click-drag to move the camera around
-            if (Mouse.current.middleButton.isPressed)
+            if (m_InputSystem.UI.MiddleClick.IsPressed() || m_InputSystem.UI.PanTouch.IsPressed())
                 m_RtsCameraTargetPos -= mouseWorldDelta;
-            if (Keyboard.current.wKey.isPressed)
-                m_RtsCameraTargetPos += float2(0,1)*SystemAPI.Time.DeltaTime*KeyboardPanRate*m_Zoom;
-            if (Keyboard.current.sKey.isPressed)
-                m_RtsCameraTargetPos += float2(0,-1)*SystemAPI.Time.DeltaTime*KeyboardPanRate*m_Zoom;
-            if (Keyboard.current.dKey.isPressed)
-                m_RtsCameraTargetPos += float2(1,0)*SystemAPI.Time.DeltaTime*KeyboardPanRate*m_Zoom;
-            if (Keyboard.current.aKey.isPressed)
-                m_RtsCameraTargetPos += float2(-1,0)*SystemAPI.Time.DeltaTime*KeyboardPanRate*m_Zoom;
+                
+            var dir = m_InputSystem.Player.Move.ReadValue<Vector2>();
+            if (dir != Vector2.zero)
+                m_RtsCameraTargetPos += float2(dir)*SystemAPI.Time.DeltaTime*KeyboardPanRate*m_Zoom;
                 
             cameraTargetPos = m_RtsCameraTargetPos;
             
             // Send commands to all selected units on right-click
-            if (Mouse.current.rightButton.isPressed && m_Selected.Count > 0)
+            if (m_InputSystem.UI.RightClick.IsPressed() && m_Selected.Count > 0)
             {
                 // Right click sends commands
                 new RtsSendJob()
                 {
                     Affected = m_Selected,
-                    Append = Keyboard.current.shiftKey.isPressed,
+                    Append = m_InputSystem.Player.Sprint.IsPressed(),
                     Command = bestEntity == Entity.Null ? RtsCommandBuffer.Move(mouseWorldPos) : RtsCommandBuffer.Interact(bestEntity),
                     
                 }.Schedule();
@@ -363,7 +351,7 @@ public partial struct PlayerControlSystem : ISystem
         
         
         //Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(p, 0), Time.deltaTime);
-        Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(cameraTargetPos, -m_Zoom), Time.deltaTime*CameraTrackRate);
+        Camera.main.transform.position = Vector3.Lerp(Camera.main.transform.position, float3(cameraTargetPos, -m_Zoom), SystemAPI.Time.DeltaTime*CameraTrackRate);
         Camera.main.farClipPlane = math.max(Camera.main.nearClipPlane+0.01f, -Camera.main.transform.position.z*1.5f);
     }
 

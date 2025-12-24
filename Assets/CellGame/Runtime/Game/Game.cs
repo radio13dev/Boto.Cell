@@ -143,7 +143,7 @@ public partial struct MovementSystem : ISystem
     }
 }
 
-public partial struct InputSystem : ISystem
+public partial struct InputSystem2 : ISystem
 {
     public void OnUpdate(ref SystemState state)
     {
