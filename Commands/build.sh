@@ -20,7 +20,7 @@ DEV_BUILD_FLAG=""
 STEAM_ACCOUNT=""               # REQUIRED for non-Web
 STEAM_BUILD_SCRIPT=""          # REQUIRED for non-Web. Relative to path 
 DO_BUILD="TRUE"
-DO_PULL="TRUE"
+DO_RESET="FALSE"
 DO_PUBLISH="TRUE"
 CONFIGURE_AWS="FALSE"
 CONFIGURE_STEAM="FALSE"
@@ -103,7 +103,7 @@ read_variables_from_args() {
 			--steam-user) STEAM_ACCOUNT="$2"; shift 2 ;;
 			--steam-build-script) STEAM_BUILD_SCRIPT="$2"; shift 2 ;;
 			--no-build) DO_BUILD="FALSE"; shift ;;
-			--no-pull) DO_PULL="FALSE"; shift ;;
+			--reset-hard) DO_RESET="TRUE"; shift ;;
 			--no-publish) DO_PUBLISH="FALSE"; shift ;;
 			--configure-aws) CONFIGURE_AWS="TRUE"; shift ;;
 			--configure-steam) CONFIGURE_STEAM="TRUE"; shift ;;
@@ -234,7 +234,7 @@ if [[ "$#" == 0 || "$1" == "--help" || "$1" == "-h" ]]; then
 	--dev: 			Makes the build a dev build
 **
  TOOLS:
-	--no-pull: 		Doesn't pull
+	--reset-hard: 		Hard resets to the branch target
 	--no-build: 		Doesn't build
 	--no-publish: 		Doesn't publish
 	--log-file <Path>:	Path to log file.
@@ -258,7 +258,7 @@ move_to_main_dir
 
 log "...setup complete..."
 
-if [[ "$DO_PULL" == "TRUE" ]]; then
+if [[ "$DO_RESET" == "TRUE" ]]; then
 	pull
 else
 	log "Skipping pull..."
